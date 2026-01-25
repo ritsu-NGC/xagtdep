@@ -23,7 +23,7 @@ Each module follows LLVM's modern pass infrastructure:
 ## Building
 
 ### Prerequisites
-- LLVM 16+ (tested with LLVM 16, 17, and 18)
+- LLVM 14-18 (tested with LLVM 16, 17, and 18)
 - CMake 3.10+
 - C++17 compiler
 
@@ -55,7 +55,7 @@ ls build/lib/
 Each pass can be loaded and run using LLVM's `opt` tool:
 
 ```bash
-# Run DavioDecomposition pass
+# Run DavioDecomposition pass (use opt, opt-16, opt-17, or opt-18 as available)
 opt-16 -load-pass-plugin=build/lib/libDavioDecompositionLib.so \
        -passes="davio-decomposition" \
        -disable-output test/test_input.ll
