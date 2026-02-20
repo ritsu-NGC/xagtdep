@@ -36,7 +36,7 @@ echo ""
 
 # Check if pass libraries exist
 PASS_LIBS=(
-    "$BUILD_DIR/lib/libDavioDecompositionLib.so"
+    "$BUILD_DIR/lib/libXAGOptimizerLib.so"
     "$BUILD_DIR/lib/libFunctionLib.so"
     "$BUILD_DIR/lib/libNewMethodLib.so"
     "$BUILD_DIR/lib/libQCLib.so"
@@ -64,9 +64,9 @@ echo "Running passes on test input..."
 echo ""
 
 # Run each pass using opt
-echo "1. Running DavioDecomposition Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libDavioDecompositionLib.so" \
-    -passes="davio-decomposition" \
+echo "1. Running XAGOptimizer Pass..."
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libXAGOptimizerLib.so" \
+    -passes="xag-optimizer" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 

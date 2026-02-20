@@ -6,7 +6,7 @@ LLVM-integrated analysis and optimization modules for DAG-based transformations.
 
 This project contains five LLVM-integrated modules for various analysis and optimization tasks:
 
-- **DavioDecomposition**: Davio decomposition analysis
+- **XAGOptimizer**: XAG optimizer analysis
 - **Function**: Function transformation operations
 - **NewMethod**: New method application techniques
 - **QC**: Quality check evaluation
@@ -28,7 +28,7 @@ make
 
 ```bash
 # Run individual module tests
-./DavioDecompositionTest
+./XAGOptimizerTest
 ./FunctionTest
 ./NewMethodTest
 ./QCTest
@@ -41,9 +41,9 @@ make
 ### Use with LLVM
 
 ```bash
-# Example: Run DavioDecomposition pass on LLVM IR
-opt-16 -load-pass-plugin=build/lib/libDavioDecompositionLib.so \
-       -passes="davio-decomposition" \
+# Example: Run XAGOptimizer pass on LLVM IR
+opt-16 -load-pass-plugin=build/lib/libXAGOptimizerLib.so \
+       -passes="xag-optimizer" \
        input.ll -o output.bc
 ```
 

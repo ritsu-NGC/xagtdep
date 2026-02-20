@@ -5,7 +5,7 @@ This document describes how each submodule in the `dagtdep` repository has been 
 ## Overview
 
 All five submodules have been updated to function as LLVM passes:
-- **DavioDecomposition**: Analysis pass for Davio decomposition
+- **XAGOptimizer**: Analysis pass for XAG optimization
 - **Function**: Function transformation pass
 - **NewMethod**: New method application pass
 - **QC**: Quality check evaluation pass
@@ -41,7 +41,7 @@ make
 
 # Libraries will be in build/lib/
 ls build/lib/
-# libDavioDecompositionLib.so
+# libXAGOptimizerLib.so
 # libFunctionLib.so
 # libNewMethodLib.so
 # libQCLib.so
@@ -55,9 +55,9 @@ ls build/lib/
 Each pass can be loaded and run using LLVM's `opt` tool:
 
 ```bash
-# Run DavioDecomposition pass (use opt, opt-16, opt-17, or opt-18 as available)
-opt-16 -load-pass-plugin=build/lib/libDavioDecompositionLib.so \
-       -passes="davio-decomposition" \
+# Run XAGOptimizer pass (use opt, opt-16, opt-17, or opt-18 as available)
+opt-16 -load-pass-plugin=build/lib/libXAGOptimizerLib.so \
+       -passes="xag-optimizer" \
        -disable-output test/test_input.ll
 
 # Run Function Transform pass
@@ -88,14 +88,14 @@ You can also use these passes programmatically in your own LLVM-based tools:
 ```cpp
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/PassManager.h"
-#include "DavioDecomposition.h"
+#include "XAGOptimizer.h"
 
 using namespace llvm;
 using namespace dagtdep;
 
 // In your analysis pipeline
 FunctionPassManager FPM;
-FPM.addPass(DavioDecompositionPass());
+FPM.addPass(XAGOptimizerPass());
 FPM.run(YourFunction, YourAnalysisManager);
 ```
 
@@ -103,7 +103,7 @@ FPM.run(YourFunction, YourAnalysisManager);
 
 | Module | Pass Name | Description |
 |--------|-----------|-------------|
-| DavioDecomposition | `davio-decomposition` | Davio Decomposition Analysis Pass |
+| XAGOptimizer | `xag-optimizer` | XAG Optimizer Analysis Pass |
 | Function | `function-transform` | Function Transformation Pass |
 | NewMethod | `new-method` | New Method Application Pass |
 | QC | `qc` | Quality Check Evaluation Pass |
@@ -152,7 +152,7 @@ Each module has a dedicated test:
 
 ```bash
 cd build
-./DavioDecompositionTest
+./XAGOptimizerTest
 ./FunctionTest
 ./NewMethodTest
 ./QCTest
@@ -186,8 +186,8 @@ These passes integrate seamlessly with standard LLVM workflows:
 clang-16 -emit-llvm -S example.c -o example.ll
 
 # 2. Run optimization passes
-opt-16 -load-pass-plugin=build/lib/libDavioDecompositionLib.so \
-       -passes="davio-decomposition" \
+opt-16 -load-pass-plugin=build/lib/libXAGOptimizerLib.so \
+       -passes="xag-optimizer" \
        example.ll -o example_analyzed.bc
 
 # 3. Further processing or compilation

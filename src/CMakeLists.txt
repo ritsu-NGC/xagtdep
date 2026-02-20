@@ -17,7 +17,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Add subdirectories for each module
-add_subdirectory(DavioDecomposition)
+add_subdirectory(XAGOptimizer)
 add_subdirectory(Function)
 add_subdirectory(NewMethod)
 add_subdirectory(QC)

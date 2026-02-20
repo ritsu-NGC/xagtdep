@@ -22,7 +22,7 @@ function(add_module_test test_name module_name)
 endfunction()
 
 # Create test executables
-add_module_test(DavioDecompositionTest DavioDecomposition)
+add_module_test(XAGOptimizerTest XAGOptimizer)
 add_module_test(FunctionTest Function)
 add_module_test(NewMethodTest NewMethod)
 add_module_test(QCTest QC)
