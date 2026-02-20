@@ -41,9 +41,9 @@ make
 ### Use with LLVM
 
 ```bash
-# Example: Run DavioDecomposition pass on LLVM IR
-opt-16 -load-pass-plugin=build/lib/libDavioDecompositionLib.so \
-       -passes="davio-decomposition" \
+# Example: Run XAG pass on LLVM IR
+opt-16 -load-pass-plugin=build/lib/libXAG.so \
+       -passes="xag" \
        input.ll -o output.bc
 ```
 
