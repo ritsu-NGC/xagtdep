@@ -16,6 +16,10 @@ add_definitions(${LLVM_DEFINITIONS_LIST})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(APPLE)
+  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -undefined dynamic_lookup")
+endif()
+
 # Add subdirectories for each module
 add_subdirectory(DavioDecomposition)
 add_subdirectory(Function)
