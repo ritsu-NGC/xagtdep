@@ -7,7 +7,7 @@ add_library(NewMethodLib MODULE
 
 # For MODULE libraries, don't link LLVM libraries (they're already in opt)
 # Just use include directories
-target_link_libraries(NewMethodLib PRIVATE mockturtle)
+target_link_libraries(NewMethodLib PRIVATE caterpillar mockturtle)
 target_include_directories(NewMethodLib PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -25,7 +25,7 @@ add_library(NewMethodObj OBJECT
 )
 
 llvm_map_components_to_libnames(llvm_libs core support)
-target_link_libraries(NewMethodObj ${llvm_libs} mockturtle)
+target_link_libraries(NewMethodObj ${llvm_libs} caterpillar mockturtle)
 target_include_directories(NewMethodObj PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}

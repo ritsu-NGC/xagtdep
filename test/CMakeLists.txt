@@ -26,7 +26,7 @@ endfunction()
 add_module_test(DavioDecompositionTest DavioDecomposition)
 add_module_test(FunctionTest Function)
 add_module_test(NewMethodTest NewMethod)
-add_module_test(QCTest QC NewMethodObj)
+add_module_test(QCTest QC NewMethodObj XAGObj)
 add_module_test(XAGTest XAG NewMethodObj)
 
 # Copy test files to build directory

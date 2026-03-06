@@ -9,42 +9,44 @@
 using namespace llvm;
 using namespace dagtdep;
 
-// Implementation of the Pass run method
-PreservedAnalyses QCPass::run(Function &F, FunctionAnalysisManager &AM) {
-  errs() << "Running QC Pass on function: " << F.getName() << "\n";
-
-  // Fetch the XAG (built by NewMethodAnalysis, potentially optimized by
-  // XAGPass)
-  auto &ctx = AM.getResult<NewMethodAnalysis>(F);
-
-  errs() << "[QCPass] Received XAG: "
+// ── Core algorithm ────────────────────────────────────────────────────────
+// Consume the optimized XagContext and synthesize a quantum circuit.
+// will add caterpillar::logic_network_synthesis here.
+void QC::evaluate(const XagContext &ctx) {
+  errs() << "[QC] Received XAG: "
          << "PIs=" << ctx.xag.num_pis() << " POs=" << ctx.xag.num_pos()
          << " Gates=" << ctx.xag.num_gates()
-         << " Optimized=" << (ctx.optimized ? "yes" : "no") << "\n";
+         << " Optimized=" << (ctx.optimized ? "yes" : "no")
+         << " Steps=" << ctx.steps.size() << "\n";
 
-  // Phase 4 will add caterpillar::logic_network_synthesis here.
-  // For now, just confirm reception.
-  errs() << "[QCPass] Quantum circuit synthesis placeholder complete.\n";
+  if (!ctx.optimized) {
+    errs() << "[QC] WARNING: XAG was not optimized. Skipping synthesis.\n";
+    return;
+  }
 
+  // placeholder — caterpillar::logic_network_synthesis goes here.
+  errs() << "[QC] Quantum circuit synthesis placeholder. "
+         << "Will iterate " << ctx.steps.size()
+         << " compute/uncompute steps in Phase 4.\n";
+}
+
+// ── LLVM Transform pass — delegates to QC::evaluate() ────────────────────
+PreservedAnalyses QCPass::run(Function &F, FunctionAnalysisManager &AM) {
+  errs() << "Running QC Pass on function: " << F.getName() << "\n";
+  auto &ctx = AM.getResult<NewMethodAnalysis>(F);
+  QC synthesizer;
+  synthesizer.evaluate(ctx);
   return PreservedAnalyses::all();
 }
 
-// Implementation of legacy methods
-void QC::evaluate() { errs() << "Evaluating Quantum Circuit\n"; }
-
-void QC::registerPass() { errs() << "QC Pass registered\n"; }
-
-// Plugin registration for new pass manager
+// ── Plugin registration ───────────────────────────────────────────────────
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "QC", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            // Register NewMethodAnalysis so AM.getResult works from this plugin
-            // too
             PB.registerAnalysisRegistrationCallback(
                 [](FunctionAnalysisManager &FAM) {
                   FAM.registerPass([&] { return NewMethodAnalysis(); });
                 });
-
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, FunctionPassManager &FPM,
                    ArrayRef<PassBuilder::PipelineElement>) {

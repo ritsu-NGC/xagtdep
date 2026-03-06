@@ -9,24 +9,22 @@
 
 namespace dagtdep {
 
-// XAG Pass for LLVM — optimizes the xag_network from NewMethodAnalysis
+/// Core algorithm class: runs caterpillar's T-depth optimization strategy
+/// on the xag_network inside XagContext.
+class XAG {
+public:
+  void optimize(XagContext &ctx);
+
+  static const char *getPassName() { return "XAG"; }
+  static const char *getPassDescription() { return "XAG Optimization Pass"; }
+};
+
+/// LLVM Transform pass wrapper — delegates to XAG::optimize().
 class XAGPass : public llvm::PassInfoMixin<XAGPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Function &F,
                               llvm::FunctionAnalysisManager &AM);
-
   static bool isRequired() { return true; }
-};
-
-// Legacy class for backward compatibility
-class XAG {
-public:
-  void optimize();
-
-  // LLVM API entry point
-  static void registerPass();
-  static const char *getPassName() { return "XAG"; }
-  static const char *getPassDescription() { return "XAG Optimization Pass"; }
 };
 
 } // namespace dagtdep
