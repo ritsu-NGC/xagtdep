@@ -1,5 +1,7 @@
 # CMakeLists.txt for test directory
 
+enable_testing()
+
 # Find LLVM
 find_package(LLVM REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -28,6 +30,12 @@ add_module_test(FunctionTest Function)
 add_module_test(NewMethodTest NewMethod)
 add_module_test(QCTest QC NewMethodObj XAGObj)
 add_module_test(XAGTest XAG NewMethodObj)
+
+add_test(NAME DavioDecompositionTest COMMAND DavioDecompositionTest)
+add_test(NAME FunctionTest COMMAND FunctionTest)
+add_test(NAME NewMethodTest COMMAND NewMethodTest)
+add_test(NAME QCTest COMMAND QCTest)
+add_test(NAME XAGTest COMMAND XAGTest)
 
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)

@@ -1,7 +1,7 @@
 // FunctionTest.cpp
 #include "Function.h"
 
-using namespace dagtdep;
+using namespace xagtdep;
 
 void testFunction() {
     // Test the legacy API

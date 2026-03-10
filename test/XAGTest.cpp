@@ -10,7 +10,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
-using namespace dagtdep;
+using namespace xagtdep;
 
 int main() {
   // Build a minimal LLVM function with 3 args so NewMethod produces a real XAG
