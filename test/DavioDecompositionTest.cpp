@@ -1,7 +1,7 @@
 // DavioDecompositionTest.cpp
 #include "DavioDecomposition.h"
 
-using namespace dagtdep;
+using namespace xagtdep;
 
 void testDavioDecomposition() {
     // Test the legacy API

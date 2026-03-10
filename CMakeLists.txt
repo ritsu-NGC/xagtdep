@@ -23,4 +23,6 @@ FetchContent_MakeAvailable(caterpillar)
 target_link_libraries(caterpillar INTERFACE ez)
 
 add_subdirectory(src)
+
+enable_testing()
 add_subdirectory(test)

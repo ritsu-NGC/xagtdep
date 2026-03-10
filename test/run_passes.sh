@@ -5,7 +5,18 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/../build"
+
+# Allow overriding BUILD_DIR via environment variable or argument
+if [ -n "${1:-}" ]; then
+    BUILD_DIR="$1"
+elif [ -n "${BUILD_DIR:-}" ]; then
+    : # use BUILD_DIR from environment
+elif [ -f "$SCRIPT_DIR/lib/libDavioDecompositionLib.so" ]; then
+    # Running from inside the build directory (e.g. copied by CMake)
+    BUILD_DIR="$SCRIPT_DIR"
+else
+    BUILD_DIR="$SCRIPT_DIR/../build"
+fi
 
 echo "=== LLVM Pass Integration Test ==="
 echo ""
@@ -34,13 +45,17 @@ fi
 echo "Using: $OPT_CMD"
 echo ""
 
+# LLVM pass plugins are CMake MODULE libraries, which use .so on all platforms
+# (including macOS, where only SHARED libraries use .dylib)
+LIB_EXT="so"
+
 # Check if pass libraries exist
 PASS_LIBS=(
-    "$BUILD_DIR/lib/libDavioDecompositionLib.so"
-    "$BUILD_DIR/lib/libFunctionLib.so"
-    "$BUILD_DIR/lib/libNewMethodLib.so"
-    "$BUILD_DIR/lib/libQCLib.so"
-    "$BUILD_DIR/lib/libXAGLib.so"
+    "$BUILD_DIR/lib/libDavioDecompositionLib.$LIB_EXT"
+    "$BUILD_DIR/lib/libFunctionLib.$LIB_EXT"
+    "$BUILD_DIR/lib/libNewMethodLib.$LIB_EXT"
+    "$BUILD_DIR/lib/libQCLib.$LIB_EXT"
+    "$BUILD_DIR/lib/libXAGLib.$LIB_EXT"
 )
 
 echo "Checking for pass libraries..."
@@ -65,31 +80,31 @@ echo ""
 
 # Run each pass using opt
 echo "1. Running DavioDecomposition Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libDavioDecompositionLib.so" \
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libDavioDecompositionLib.$LIB_EXT" \
     -passes="davio-decomposition" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
 echo "2. Running Function Transform Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libFunctionLib.so" \
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libFunctionLib.$LIB_EXT" \
     -passes="function-transform" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
 echo "3. Running NewMethod Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libNewMethodLib.so" \
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libNewMethodLib.$LIB_EXT" \
     -passes="new-method" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
 echo "4. Running QC Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libQCLib.so" \
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libQCLib.$LIB_EXT" \
     -passes="qc" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
 echo "5. Running XAG Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libXAGLib.so" \
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libXAGLib.$LIB_EXT" \
     -passes="xag" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
