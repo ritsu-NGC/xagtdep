@@ -26,6 +26,66 @@ Inputs and Outputs from this module will be in mockturtle::xag_network format th
 
 Input is an XAG and output is a QASM file for a quantum circuit. Uses Qiskit to process quantum circuits.
 
+Conversion from an XAG to a quantum circuit will occur according to the following algorithm
+
+## Pseudocode
+```text
+function XAG2QC(xag):
+    QC = new() //full circuit
+    A  = new() //A branch circuit
+    B = new()  //B branch circuit
+    Traverse the XAG from the output, depth-first to the inputs
+        if XOR node:
+            Append the Below Circuit 
+	      ---------------------------------
+	            +---+     +----+
+	            |   |     |    |
+	      ------|   |-----|    |------
+	            | B |     | A  |
+	      ------|   |-----|    |------
+	            |   |     |    |
+	      ------|   |-----|    |------
+	            +---+     +----+
+	             |          |
+	             |          |
+	      ------(+)--------(+)--------
+	                                 (circled plus)	    
+	else if AND node:
+	     if A and B inputs are both primary inputs or ancilla:
+	     	append the below circuit
+	            
+	      A      ------*---
+	                   |
+	      B      ------*---
+	                   |      
+	                   |      
+	      a_out  -----(+)-----
+
+	      if one of A or B is a primary input, and the other is
+	      an input from a node, where A is the circuit you get from the
+	      primary node.
+		
+			   +----+        +----+      
+	     --------------|    |--------|    |-----
+		           |    |        |    |     
+	     --------------| A  |--------| A  |-----
+	                   |    |        |    |
+	                   +----+        +----+
+	  B  --------*------ | -----*----- | -------
+	             |       |      |      |
+	             |       |      |      |        
+	             |       |      |      |        
+	 a_0 --------* -----(+)-----*-----(+)-------
+	             |              |  	            
+	             |              |  	            
+	             |              |  	            
+	     -------(+)------------(+)--------------
+	     
+    return QC
+```
+
+##QC_Prop
+
 
 ## Contributing
 
