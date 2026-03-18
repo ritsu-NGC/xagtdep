@@ -36,14 +36,13 @@ function XAG2QC(xag):
     B = new()  //B branch circuit
     Traverse the XAG from the output, depth-first to the inputs
         if XOR node:
-            Append the Below Circuit 
-	      ---------------------------------
+            Append the Below Circuit
 	            +---+     +----+
 	            |   |     |    |
 	      ------|   |-----|    |------
-	            | B |     | A  |
+	            | B |     | A  |      
 	      ------|   |-----|    |------
-	            |   |     |    |
+	            |   |     |    |      
 	      ------|   |-----|    |------
 	            +---+     +----+
 	             |          |
@@ -63,11 +62,12 @@ function XAG2QC(xag):
 
 	      if one of A or B is a primary input, and the other is
 	      an input from a node, where A is the circuit you get from the
-	      primary node.
+	      primary node, add ancilla a_k, and generate the following circuit
+	      and append it to QC
 		
-			   +----+        +----+      
+                           +----+        +----+      
 	     --------------|    |--------|    |-----
-		           |    |        |    |     
+                           |    |        |    |     
 	     --------------| A  |--------| A  |-----
 	                   |    |        |    |
 	                   +----+        +----+
@@ -75,11 +75,11 @@ function XAG2QC(xag):
 	             |       |      |      |
 	             |       |      |      |        
 	             |       |      |      |        
-	 a_0 --------* -----(+)-----*-----(+)-------
+	 a_k --------* -----(+)-----*-----(+)-------
 	             |              |  	            
 	             |              |  	            
 	             |              |  	            
-	     -------(+)------------(+)--------------
+	a_out -------(+)------------(+)--------------
 	     
     return QC
 ```
