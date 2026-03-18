@@ -17,8 +17,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y llvm-16-dev
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Qiskit
+        run: pip install -r requirements.txt
+
       - name: Configure
-        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm
+        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm -DXAGTDEP_ENABLE_PYTHON=ON
 
       - name: Build
         run: cmake --build build -j$(nproc)
