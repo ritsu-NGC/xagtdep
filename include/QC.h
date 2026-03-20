@@ -6,6 +6,7 @@
 #include "XagContext.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
+#include <string>
 
 namespace xagtdep {
 
@@ -14,13 +15,20 @@ namespace xagtdep {
 /// This is what QCTest exercises directly.
 class QC {
 public:
-  /// Print stats from ctx and invoke logic_network_synthesis.
+  /// Traverse ctx.xag, build a gate list, and (optionally) produce QASM.
   void evaluate(const XagContext &ctx);
+
+  /// Access the output (QASM string when Python enabled, JSON gate list
+  /// otherwise).
+  const std::string &getQASM() const { return qasm_output_; }
 
   static const char *getPassName() { return "QC"; }
   static const char *getPassDescription() {
     return "Quantum Circuit Synthesis Pass";
   }
+
+private:
+  std::string qasm_output_;
 };
 
 /// LLVM Transform pass wrapper — delegates to QC::evaluate().
