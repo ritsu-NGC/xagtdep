@@ -289,15 +289,16 @@ static bool testDecomposedViaQC() {
   std::string output = synthesizer.getQASM();
   bool pass = !output.empty();
 
-  // Output should contain "t" or "tdg" (decomposed T-gates).
-  if (output.find("\"t\"") == std::string::npos &&
-      output.find("\"tdg\"") == std::string::npos) {
+  // Output should contain "tdg" (decomposed T-gates).
+  // Works for both JSON ("tdg") and QASM (tdg q[3];) output formats.
+  if (output.find("tdg") == std::string::npos) {
     errs() << "[DecomposedViaQC] FAIL: output missing T-gate entries\n";
     pass = false;
   }
 
   // Output should NOT contain "ccx" (abstract Toffoli).
-  if (output.find("\"ccx\"") != std::string::npos) {
+  // Works for both JSON ("ccx") and QASM (ccx q[0],q[1],q[2];) formats.
+  if (output.find("ccx") != std::string::npos) {
     errs() << "[DecomposedViaQC] FAIL: output contains abstract Toffoli\n";
     pass = false;
   }
@@ -326,7 +327,8 @@ static bool testAbstractModeUnchanged() {
   bool pass = !output.empty();
 
   // Abstract mode should produce "ccx" (Toffoli).
-  if (output.find("\"ccx\"") == std::string::npos) {
+  // Works for both JSON ("ccx") and QASM (ccx q[0],q[1],q[2];) formats.
+  if (output.find("ccx") == std::string::npos) {
     errs() << "[AbstractUnchanged] FAIL: output missing ccx\n";
     pass = false;
   }
