@@ -10,13 +10,20 @@
 
 namespace xagtdep {
 
+/// Selects between abstract (Toffoli-level) and decomposed (T-gate-level)
+/// quantum circuit synthesis.
+enum class SynthesisMode { Abstract, Decomposed };
+
 /// Core algorithm class: consumes the XagContext produced by XAGPass
 /// and synthesizes a quantum circuit.
 /// This is what QCTest exercises directly.
 class QC {
 public:
   /// Traverse ctx.xag, build a gate list, and (optionally) produce QASM.
-  void evaluate(const XagContext &ctx);
+  /// Abstract mode emits X/CNOT/Toffoli; Decomposed mode emits
+  /// X/CNOT/H/T/Tdg/Z/Zdg (no abstract Toffoli).
+  void evaluate(const XagContext &ctx,
+                SynthesisMode mode = SynthesisMode::Abstract);
 
   /// Access the output (QASM string when Python enabled, JSON gate list
   /// otherwise).

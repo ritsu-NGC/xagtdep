@@ -6,6 +6,7 @@ option(XAGTDEP_ENABLE_PYTHON "Enable Qiskit Python integration for QASM output" 
 set(QC_SOURCES
     QC.cpp
     XAGToGateList.cpp
+    XAGToDecomposed.cpp
 )
 
 if(XAGTDEP_ENABLE_PYTHON)

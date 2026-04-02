@@ -2,6 +2,7 @@
 #include "QC.h"
 #include "NewMethod.h"
 #include "QCGateList.h"
+#include "XAGToDecomposed.h"
 #include "XAGToGateList.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -17,20 +18,27 @@ using namespace xagtdep;
 
 // ── Core algorithm ────────────────────────────────────────────────────────
 // Consume the optimized XagContext and synthesize a quantum circuit.
-void QC::evaluate(const XagContext &ctx) {
+void QC::evaluate(const XagContext &ctx, SynthesisMode mode) {
   errs() << "[QC] Received XAG: "
          << "PIs=" << ctx.xag.num_pis() << " POs=" << ctx.xag.num_pos()
          << " Gates=" << ctx.xag.num_gates()
          << " Optimized=" << (ctx.optimized ? "yes" : "no")
          << " Steps=" << ctx.steps.size() << "\n";
+  errs() << "[QC] Synthesis mode: "
+         << (mode == SynthesisMode::Abstract ? "abstract" : "decomposed")
+         << "\n";
 
   if (!ctx.optimized) {
     errs() << "[QC] WARNING: XAG was not optimized. Skipping synthesis.\n";
     return;
   }
 
-  // Convert XAG to gate list via depth-first traversal (SPEC XAG2QC).
-  QCGateList gateList = XAGToGateList::translate(ctx);
+  // Convert XAG to gate list via depth-first traversal.
+  QCGateList gateList;
+  if (mode == SynthesisMode::Abstract)
+    gateList = XAGToGateList::translate(ctx);
+  else
+    gateList = XAGToDecomposed::translate(ctx);
   std::string json = gateList.toJSON();
   errs() << "[QC] Gate list: " << json << "\n";
 
