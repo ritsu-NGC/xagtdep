@@ -23,7 +23,7 @@ public:
   /// Abstract mode emits X/CNOT/Toffoli; Decomposed mode emits
   /// X/CNOT/H/T/Tdg/Z/Zdg (no abstract Toffoli).
   void evaluate(const XagContext &ctx,
-                SynthesisMode mode = SynthesisMode::Abstract);
+                SynthesisMode mode = SynthesisMode::Decomposed);
 
   /// Access the output (QASM string when Python enabled, JSON gate list
   /// otherwise).
