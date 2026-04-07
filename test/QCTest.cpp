@@ -2,6 +2,8 @@
 #include "QC.h"
 #include "NewMethod.h"
 #include "XAG.h"
+#include "ExistingMethod.h"
+#include "ProposedMethod.h"
 #include "XAGToGateList.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
@@ -131,9 +133,299 @@ static bool testAndCase2() {
   return pass;
 }
 
+/// Helper: return gate type name string.
+static const char *gateTypeName(GateType t) {
+  switch (t) {
+  case GateType::X:       return "X";
+  case GateType::CNOT:    return "CNOT";
+  case GateType::Toffoli: return "Toffoli";
+  case GateType::H:       return "H";
+  case GateType::T:       return "T";
+  case GateType::Tdg:     return "Tdg";
+  }
+  return "?";
+}
+
+/// Helper: print gate list for debugging.
+static void printGateList(const char *label, const QCGateList &gl) {
+  errs() << "[" << label << "] num_qubits=" << gl.num_qubits
+         << " num_pis=" << gl.num_pis
+         << " num_ancillas=" << gl.num_ancillas
+         << " gates=" << gl.gates.size() << "\n";
+  for (size_t i = 0; i < gl.gates.size(); ++i) {
+    const auto &g = gl.gates[i];
+    errs() << "  [" << i << "] " << gateTypeName(g.type) << "(";
+    for (size_t j = 0; j < g.controls.size(); ++j) {
+      if (j > 0) errs() << ",";
+      errs() << "q" << g.controls[j];
+    }
+    errs() << " -> q" << g.target << ")\n";
+  }
+}
+
+/// Helper: check that a gate list contains only decomposed gates (H,T,Tdg,CNOT,X).
+static bool hasOnlyDecomposedGates(const QCGateList &gl) {
+  for (const auto &g : gl.gates) {
+    if (g.type != GateType::H && g.type != GateType::T &&
+        g.type != GateType::Tdg && g.type != GateType::CNOT &&
+        g.type != GateType::X) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Test 3: Existing Method on (a AND b) XOR c.
+static bool testExistingMethodPipeline() {
+  // Build XAG: (a AND b) XOR c
+  mockturtle::xag_network xag;
+  auto a = xag.create_pi();
+  auto b = xag.create_pi();
+  auto c = xag.create_pi();
+  auto ab = xag.create_and(a, b);
+  auto result = xag.create_xor(ab, c);
+  xag.create_po(result);
+
+  XagContext xagCtx;
+  xagCtx.xag = xag;
+  xagCtx.optimized = true;
+
+  QCGateList gateList = ExistingMethod::translate(xagCtx);
+  printGateList("ExistingMethod::Pipeline", gateList);
+
+  bool pass = true;
+
+  if (gateList.gates.empty()) {
+    errs() << "[ExistingMethod::Pipeline] FAIL: gate list is empty\n";
+    pass = false;
+  }
+
+  if (!hasOnlyDecomposedGates(gateList)) {
+    errs() << "[ExistingMethod::Pipeline] FAIL: contains non-decomposed gates\n";
+    pass = false;
+  }
+
+  if (gateList.num_pis != 3) {
+    errs() << "[ExistingMethod::Pipeline] FAIL: expected 3 PIs, got "
+           << gateList.num_pis << "\n";
+    pass = false;
+  }
+
+  errs() << "[ExistingMethod::Pipeline] " << (pass ? "PASSED" : "FAILED") << "\n";
+  return pass;
+}
+
+/// Test 4: Proposed Method on (a AND b) XOR c.
+static bool testProposedMethodPipeline() {
+  mockturtle::xag_network xag;
+  auto a = xag.create_pi();
+  auto b = xag.create_pi();
+  auto c = xag.create_pi();
+  auto ab = xag.create_and(a, b);
+  auto result = xag.create_xor(ab, c);
+  xag.create_po(result);
+
+  XagContext xagCtx;
+  xagCtx.xag = xag;
+  xagCtx.optimized = true;
+
+  QCGateList gateList = ProposedMethod::translate(xagCtx);
+  printGateList("ProposedMethod::Pipeline", gateList);
+
+  bool pass = true;
+
+  if (gateList.gates.empty()) {
+    errs() << "[ProposedMethod::Pipeline] FAIL: gate list is empty\n";
+    pass = false;
+  }
+
+  if (!hasOnlyDecomposedGates(gateList)) {
+    errs() << "[ProposedMethod::Pipeline] FAIL: contains non-decomposed gates\n";
+    pass = false;
+  }
+
+  if (gateList.num_pis != 3) {
+    errs() << "[ProposedMethod::Pipeline] FAIL: expected 3 PIs, got "
+           << gateList.num_pis << "\n";
+    pass = false;
+  }
+
+  errs() << "[ProposedMethod::Pipeline] " << (pass ? "PASSED" : "FAILED") << "\n";
+  return pass;
+}
+
+/// Test 5: Existing Method on a AND (b XOR c) — exercises "one PI" (Fig 11).
+static bool testExistingMethodAndOnePI() {
+  mockturtle::xag_network xag;
+  auto a = xag.create_pi();
+  auto b = xag.create_pi();
+  auto c = xag.create_pi();
+  auto bxc = xag.create_xor(b, c);
+  auto result = xag.create_and(a, bxc);
+  xag.create_po(result);
+
+  XagContext xagCtx;
+  xagCtx.xag = xag;
+  xagCtx.optimized = true;
+
+  QCGateList gateList = ExistingMethod::translate(xagCtx);
+  printGateList("ExistingMethod::AndOnePI", gateList);
+
+  bool pass = true;
+
+  if (gateList.gates.empty()) {
+    errs() << "[ExistingMethod::AndOnePI] FAIL: gate list is empty\n";
+    pass = false;
+  }
+
+  if (!hasOnlyDecomposedGates(gateList)) {
+    errs() << "[ExistingMethod::AndOnePI] FAIL: contains non-decomposed gates\n";
+    pass = false;
+  }
+
+  errs() << "[ExistingMethod::AndOnePI] " << (pass ? "PASSED" : "FAILED") << "\n";
+  return pass;
+}
+
+/// Test 6: Proposed Method on a AND (b XOR c) — exercises "one PI" (Fig 12).
+static bool testProposedMethodAndOnePI() {
+  mockturtle::xag_network xag;
+  auto a = xag.create_pi();
+  auto b = xag.create_pi();
+  auto c = xag.create_pi();
+  auto bxc = xag.create_xor(b, c);
+  auto result = xag.create_and(a, bxc);
+  xag.create_po(result);
+
+  XagContext xagCtx;
+  xagCtx.xag = xag;
+  xagCtx.optimized = true;
+
+  QCGateList gateList = ProposedMethod::translate(xagCtx);
+  printGateList("ProposedMethod::AndOnePI", gateList);
+
+  bool pass = true;
+
+  if (gateList.gates.empty()) {
+    errs() << "[ProposedMethod::AndOnePI] FAIL: gate list is empty\n";
+    pass = false;
+  }
+
+  if (!hasOnlyDecomposedGates(gateList)) {
+    errs() << "[ProposedMethod::AndOnePI] FAIL: contains non-decomposed gates\n";
+    pass = false;
+  }
+
+  errs() << "[ProposedMethod::AndOnePI] " << (pass ? "PASSED" : "FAILED") << "\n";
+  return pass;
+}
+
+/// Helper: count gates by type and print a summary line.
+struct GateCounts {
+  uint32_t t = 0, tdg = 0, cnot = 0, h = 0, x = 0, toffoli = 0;
+  uint32_t total = 0;
+  uint32_t tCount() const { return t + tdg; }
+};
+
+static GateCounts countGates(const QCGateList &gl) {
+  GateCounts c;
+  c.total = gl.gates.size();
+  for (const auto &g : gl.gates) {
+    switch (g.type) {
+    case GateType::T:       c.t++; break;
+    case GateType::Tdg:     c.tdg++; break;
+    case GateType::CNOT:    c.cnot++; break;
+    case GateType::H:       c.h++; break;
+    case GateType::X:       c.x++; break;
+    case GateType::Toffoli: c.toffoli++; break;
+    }
+  }
+  return c;
+}
+
+static void printRow(const char *name, const QCGateList &gl) {
+  GateCounts c = countGates(gl);
+  // For Current algorithm: each abstract Toffoli decomposes to 7 T-gates + 6 CNOTs
+  uint32_t effectiveT = c.tCount() + c.toffoli * 7;
+  uint32_t effectiveCNOT = c.cnot + c.toffoli * 6;
+  uint32_t effectiveTotal = c.total + c.toffoli * 12; // replace 1 Toffoli with 13 gates
+
+  errs() << "  " << name;
+  // Pad to 20 chars
+  for (size_t i = strlen(name); i < 20; i++) errs() << " ";
+  errs() << "| " << gl.num_qubits << "\t| "
+         << effectiveT << "\t| " << effectiveCNOT << "\t| "
+         << c.h << "\t| " << effectiveTotal << "\n";
+}
+
+/// Comparison test: run all 3 algorithms on the same XAGs and print table.
+static bool testComparison() {
+  errs() << "\n========== ALGORITHM COMPARISON ==========\n";
+
+  // --- Circuit 1: (a AND b) XOR c ---
+  {
+    mockturtle::xag_network xag;
+    auto a = xag.create_pi();
+    auto b = xag.create_pi();
+    auto c = xag.create_pi();
+    auto ab = xag.create_and(a, b);
+    auto result = xag.create_xor(ab, c);
+    xag.create_po(result);
+
+    XagContext ctx;
+    ctx.xag = xag;
+    ctx.optimized = true;
+
+    QCGateList gl_cur = XAGToGateList::translate(ctx);
+    QCGateList gl_ex  = ExistingMethod::translate(ctx);
+    QCGateList gl_pr  = ProposedMethod::translate(ctx);
+
+    errs() << "\n  Circuit: (a AND b) XOR c\n";
+    errs() << "  Algorithm           | Qubits\t| T-count\t| CNOTs\t| H\t| Total\n";
+    errs() << "  --------------------|-------|---------|-------|---|------\n";
+    printRow("Current", gl_cur);
+    printRow("Existing Method", gl_ex);
+    printRow("Proposed Method", gl_pr);
+  }
+
+  // --- Circuit 2: a AND (b XOR c) ---
+  {
+    mockturtle::xag_network xag;
+    auto a = xag.create_pi();
+    auto b = xag.create_pi();
+    auto c = xag.create_pi();
+    auto bxc = xag.create_xor(b, c);
+    auto result = xag.create_and(a, bxc);
+    xag.create_po(result);
+
+    XagContext ctx;
+    ctx.xag = xag;
+    ctx.optimized = true;
+
+    QCGateList gl_cur = XAGToGateList::translate(ctx);
+    QCGateList gl_ex  = ExistingMethod::translate(ctx);
+    QCGateList gl_pr  = ProposedMethod::translate(ctx);
+
+    errs() << "\n  Circuit: a AND (b XOR c)\n";
+    errs() << "  Algorithm           | Qubits\t| T-count\t| CNOTs\t| H\t| Total\n";
+    errs() << "  --------------------|-------|---------|-------|---|------\n";
+    printRow("Current", gl_cur);
+    printRow("Existing Method", gl_ex);
+    printRow("Proposed Method", gl_pr);
+  }
+
+  errs() << "\n==========================================\n\n";
+  return true; // comparison always passes
+}
+
 int main() {
   bool allPass = true;
   allPass &= testPipeline();
   allPass &= testAndCase2();
+  allPass &= testExistingMethodPipeline();
+  allPass &= testProposedMethodPipeline();
+  allPass &= testExistingMethodAndOnePI();
+  allPass &= testProposedMethodAndOnePI();
+  allPass &= testComparison();
   return allPass ? 0 : 1;
 }

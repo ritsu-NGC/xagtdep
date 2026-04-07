@@ -22,5 +22,11 @@ def gates_to_qasm(json_str: str) -> str:
             qc.cx(ctrls[0], tgt)
         elif t == "ccx":
             qc.ccx(ctrls[0], ctrls[1], tgt)
+        elif t == "h":
+            qc.h(tgt)
+        elif t == "t":
+            qc.t(tgt)
+        elif t == "tdg":
+            qc.tdg(tgt)
 
     return dumps(qc)

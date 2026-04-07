@@ -17,8 +17,8 @@ All modules are implemented as dynamically loadable LLVM passes that can be used
 
 ## XAG
 
-XAG implements the algorithm in Meuli et al [2022](https://doi.org/10.1038/s41534-021-00514-y) to optimize
-XAG for AND depth, which optimizes for T-depth. These are implemented in the [caterpillar library](https://github.com/gmeuli/caterpillar)
+XAG implements the Meuli low-depth strategy from [Meuli et al. 2022](https://doi.org/10.1038/s41534-021-00514-y) to optimize
+XAG for AND depth, which optimizes for T-depth. This is implemented in the [caterpillar library](https://github.com/gmeuli/caterpillar)
 
 Inputs and Outputs from this module will be in mockturtle::xag_network format that caterpillar uses
 
