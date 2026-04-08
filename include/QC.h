@@ -10,13 +10,21 @@
 
 namespace xagtdep {
 
+/// Algorithm selection for quantum circuit synthesis.
+enum class SynthesisAlgorithm {
+  Current,        // Original XAGToGateList (Toffoli-based)
+  ExistingMethod, // Algorithm 1: exact Toffoli decomposition, compute||uncompute
+  ProposedMethod  // Algorithm 2: relative-phase Toffoli, no top-level uncompute
+};
+
 /// Core algorithm class: consumes the XagContext produced by XAGPass
 /// and synthesizes a quantum circuit.
 /// This is what QCTest exercises directly.
 class QC {
 public:
   /// Traverse ctx.xag, build a gate list, and (optionally) produce QASM.
-  void evaluate(const XagContext &ctx);
+  void evaluate(const XagContext &ctx,
+                SynthesisAlgorithm algo = SynthesisAlgorithm::Current);
 
   /// Access the output (QASM string when Python enabled, JSON gate list
   /// otherwise).

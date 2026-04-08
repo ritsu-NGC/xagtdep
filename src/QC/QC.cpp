@@ -1,6 +1,8 @@
 // QC.cpp
 #include "QC.h"
 #include "NewMethod.h"
+#include "ExistingMethod.h"
+#include "ProposedMethod.h"
 #include "QCGateList.h"
 #include "XAGToGateList.h"
 #include "llvm/IR/Function.h"
@@ -17,7 +19,7 @@ using namespace xagtdep;
 
 // ── Core algorithm ────────────────────────────────────────────────────────
 // Consume the optimized XagContext and synthesize a quantum circuit.
-void QC::evaluate(const XagContext &ctx) {
+void QC::evaluate(const XagContext &ctx, SynthesisAlgorithm algo) {
   errs() << "[QC] Received XAG: "
          << "PIs=" << ctx.xag.num_pis() << " POs=" << ctx.xag.num_pos()
          << " Gates=" << ctx.xag.num_gates()
@@ -29,8 +31,22 @@ void QC::evaluate(const XagContext &ctx) {
     return;
   }
 
-  // Convert XAG to gate list via depth-first traversal (SPEC XAG2QC).
-  QCGateList gateList = XAGToGateList::translate(ctx);
+  // Select synthesis algorithm.
+  QCGateList gateList;
+  switch (algo) {
+  case SynthesisAlgorithm::Current:
+    errs() << "[QC] Using Current (XAGToGateList) algorithm.\n";
+    gateList = XAGToGateList::translate(ctx);
+    break;
+  case SynthesisAlgorithm::ExistingMethod:
+    errs() << "[QC] Using Existing Method (Algorithm 1).\n";
+    gateList = ExistingMethod::translate(ctx);
+    break;
+  case SynthesisAlgorithm::ProposedMethod:
+    errs() << "[QC] Using Proposed Method (Algorithm 2).\n";
+    gateList = ProposedMethod::translate(ctx);
+    break;
+  }
   std::string json = gateList.toJSON();
   errs() << "[QC] Gate list: " << json << "\n";
 

@@ -10,7 +10,7 @@
 
 namespace xagtdep {
 
-enum class GateType { X, CNOT, Toffoli };
+enum class GateType { X, CNOT, Toffoli, H, T, Tdg };
 
 struct GateOp {
   GateType type;
@@ -44,6 +44,15 @@ struct QCGateList {
         break;
       case GateType::Toffoli:
         json += "ccx";
+        break;
+      case GateType::H:
+        json += "h";
+        break;
+      case GateType::T:
+        json += "t";
+        break;
+      case GateType::Tdg:
+        json += "tdg";
         break;
       }
       json += "\",\"controls\":[";
