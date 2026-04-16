@@ -37,6 +37,10 @@ add_test(NAME NewMethodTest COMMAND NewMethodTest)
 add_test(NAME QCTest COMMAND QCTest)
 add_test(NAME XAGTest COMMAND XAGTest)
 
+# Verification test — generates random XAGs and exports JSON for Python verification
+add_module_test(QCVerificationTest QC NewMethodObj XAGObj)
+add_test(NAME QCVerificationTest COMMAND QCVerificationTest)
+
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)
 configure_file(run_passes.sh ${CMAKE_BINARY_DIR}/run_passes.sh COPYONLY)
