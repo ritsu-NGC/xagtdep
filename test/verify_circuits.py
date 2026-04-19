@@ -59,6 +59,43 @@ def simulate_truth_table(circuit: QuantumCircuit, num_pis: int,
     return format(tt_int, f'0{num_hex_chars}x')
 
 
+def generate_qasm(circuit: QuantumCircuit) -> str:
+    """Generate OpenQASM 2.0 string from a QuantumCircuit."""
+    try:
+        from qiskit.qasm2 import dumps
+        return dumps(circuit)
+    except Exception:
+        return "(QASM generation failed)"
+
+
+def write_failure_report(report_path: str, failures: list):
+    """Write a detailed failure report for debugging failed XAGs."""
+    with open(report_path, "w") as f:
+        f.write("=" * 70 + "\n")
+        f.write("EQUIVALENCE CHECK FAILURE REPORT\n")
+        f.write("=" * 70 + "\n\n")
+        f.write(f"Total failures: {len(failures)}\n\n")
+
+        for entry in failures:
+            f.write("-" * 70 + "\n")
+            f.write(f"XAG #{entry['idx']} | Method: {entry['method']}\n")
+            f.write("-" * 70 + "\n")
+            f.write(f"  Random seed:     {entry.get('seed', 'N/A')}\n")
+            f.write(f"  Config:          pis={entry.get('config_pis', '?')}"
+                    f" ands={entry.get('config_ands', '?')}"
+                    f" xors={entry.get('config_xors', '?')}\n")
+            f.write(f"  Num PIs:         {entry['num_pis']}\n")
+            f.write(f"  Num gates:       {entry.get('num_gates', '?')}\n")
+            f.write(f"  Reference TT:    {entry['ref_tt']}\n")
+            f.write(f"  Constraint OK:   {entry.get('constraint_ok', '?')}\n")
+            f.write(f"  Error:           {entry.get('error', 'no matching output qubit')}\n")
+            f.write(f"\n  --- Generated Quantum Circuit (QASM) ---\n")
+            f.write(entry.get("qasm", "(not available)"))
+            f.write("\n\n")
+
+    print(f"\nFailure report written to: {report_path}")
+
+
 def verify_all(data_dir: str) -> tuple:
     """Verify all circuits in data_dir. Returns (passed, failed, total)."""
     data_path = Path(data_dir)
@@ -76,6 +113,7 @@ def verify_all(data_dir: str) -> tuple:
     passed = 0
     failed = 0
     total = 0
+    failures = []  # Collect failure details for report
 
     methods = ["current", "existing", "proposed"]
 
@@ -128,11 +166,29 @@ def verify_all(data_dir: str) -> tuple:
                     print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
                           f"{ref_tt:>10} | {'no match':>10} | {status:>5}")
                     failed += 1
+                    failures.append({
+                        "idx": idx, "method": method, "num_pis": num_pis,
+                        "ref_tt": ref_tt, "num_gates": meta.get("num_gates"),
+                        "seed": meta.get("seed", "N/A"),
+                        "config_pis": meta.get("config_pis"),
+                        "config_ands": meta.get("config_ands"),
+                        "config_xors": meta.get("config_xors"),
+                        "constraint_ok": meta.get("constraint_ok"),
+                        "qasm": generate_qasm(circuit),
+                    })
             except Exception as e:
                 failed += 1
                 print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
                       f"{ref_tt:>10} | {'ERROR':>10} | {'FAIL':>5}")
                 print(f"  ^ Exception: {e}")
+                failures.append({
+                    "idx": idx, "method": method, "num_pis": num_pis,
+                    "ref_tt": ref_tt, "seed": meta.get("seed", "N/A"),
+                    "config_pis": meta.get("config_pis"),
+                    "config_ands": meta.get("config_ands"),
+                    "config_xors": meta.get("config_xors"),
+                    "error": str(e),
+                })
 
             total += 1
 
@@ -142,6 +198,12 @@ def verify_all(data_dir: str) -> tuple:
     print("NOTE: Existing Method failures are expected — its top-level")
     print("compute||uncompute erases the output. The result exists only")
     print("in the middle of the circuit, not in the final state.")
+
+    # Write failure report if there are failures.
+    if failures:
+        report_path = str(data_path / "failure_report.txt")
+        write_failure_report(report_path, failures)
+
     return passed, failed, total
 
 

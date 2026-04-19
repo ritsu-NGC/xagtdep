@@ -187,8 +187,12 @@ int main() {
       writeFile(prefix + "_existing.json", gl_ex.toJSON());
       writeFile(prefix + "_proposed.json", gl_pr.toJSON());
 
-      // Write metadata.
-      std::string meta = "{\"num_pis\":" + std::to_string(xag.num_pis()) +
+      // Write metadata (includes seed and config for reproducibility).
+      std::string meta = "{\"seed\":" + std::to_string(seed) +
+                         ",\"config_pis\":" + std::to_string(cfg.pis) +
+                         ",\"config_ands\":" + std::to_string(cfg.ands) +
+                         ",\"config_xors\":" + std::to_string(cfg.xors) +
+                         ",\"num_pis\":" + std::to_string(xag.num_pis()) +
                          ",\"num_pos\":" + std::to_string(xag.num_pos()) +
                          ",\"num_gates\":" + std::to_string(xag.num_gates()) +
                          ",\"truth_table_hex\":\"" + tt_hex + "\"" +
