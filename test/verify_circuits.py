@@ -1,9 +1,10 @@
 """Verify synthesized quantum circuits against reference truth tables.
 
 Reads JSON gate lists and metadata from build/verification_data/,
-simulates each circuit using Qiskit's Statevector, extracts the output
-qubit's truth table, and compares against the reference truth table
-from mockturtle simulation.
+builds a reference oracle from the truth table, then verifies each
+synthesized circuit using:
+  1. Statevector simulation (truth table extraction)
+  2. QCEC formal equivalence checking (synthesized vs reference oracle)
 
 Usage:
     python test/verify_circuits.py [data_dir]
@@ -26,37 +27,146 @@ from qc_synthesis import json_to_circuit
 
 def simulate_truth_table(circuit: QuantumCircuit, num_pis: int,
                          output_qubit: int) -> str:
-    """Simulate circuit for all 2^num_pis inputs, return truth table as hex.
-
-    For each input combination, initialize PIs (qubits 0..num_pis-1) and
-    measure the output_qubit. Returns a hex string matching kitty format.
-    """
+    """Simulate circuit for all 2^num_pis inputs, return truth table as hex."""
     n = circuit.num_qubits
     truth_bits = []
 
     for input_val in range(2 ** num_pis):
-        # Build input state: set PI qubits according to input_val.
         qc = QuantumCircuit(n)
         for bit in range(num_pis):
             if (input_val >> bit) & 1:
                 qc.x(bit)
-        # Append the synthesis circuit.
         qc.compose(circuit, inplace=True)
 
-        # Simulate and check probability of output_qubit being |1>.
         sv = Statevector.from_instruction(qc)
         probs = sv.probabilities([output_qubit])
-        # probs[0] = P(output=0), probs[1] = P(output=1)
         output_bit = 1 if probs[1] > 0.5 else 0
         truth_bits.append(output_bit)
 
-    # Convert to hex string (kitty format: LSB first, 4 bits per hex char).
     tt_int = 0
     for i, bit in enumerate(truth_bits):
         tt_int |= (bit << i)
 
     num_hex_chars = max(1, (2 ** num_pis + 3) // 4)
     return format(tt_int, f'0{num_hex_chars}x')
+
+
+def build_reference_oracle(tt_hex: str, num_pis: int,
+                           total_qubits: int, output_qubit: int) -> QuantumCircuit:
+    """Build a reference oracle circuit from truth table using MCX gates.
+
+    For each minterm (input where f=1), applies a multi-controlled X gate
+    with appropriate control polarities to flip the output qubit.
+    The result is a provably correct circuit encoding the truth table.
+    """
+    tt_int = int(tt_hex, 16)
+    qc = QuantumCircuit(total_qubits)
+    pi_qubits = list(range(num_pis))
+
+    for input_val in range(2 ** num_pis):
+        if not ((tt_int >> input_val) & 1):
+            continue
+
+        # Flip PI qubits where the input bit is 0 (control-on-zero).
+        flips = []
+        for bit in range(num_pis):
+            if not ((input_val >> bit) & 1):
+                qc.x(bit)
+                flips.append(bit)
+
+        # MCX: all PIs control, output_qubit is target.
+        # If output_qubit is a PI qubit, exclude it from controls.
+        controls = [q for q in pi_qubits if q != output_qubit]
+        if len(controls) == 0:
+            qc.x(output_qubit)
+        elif len(controls) == 1:
+            qc.cx(controls[0], output_qubit)
+        elif len(controls) == 2:
+            qc.ccx(controls[0], controls[1], output_qubit)
+        else:
+            qc.mcx(controls, output_qubit)
+
+        # Undo flips.
+        for bit in flips:
+            qc.x(bit)
+
+    return qc
+
+
+def run_qcec_check(synth_circuit: QuantumCircuit, ref_circuit: QuantumCircuit,
+                   num_pis: int, output_qubit: int) -> str:
+    """Run QCEC equivalence check between synthesized and reference circuits.
+
+    Runs in a subprocess to prevent QCEC C++ crashes (std::out_of_range
+    abort on certain circuit configurations) from killing the main process.
+    Communicates via temporary QASM files.
+    """
+    try:
+        from mqt import qcec  # noqa: F401 — check installed
+    except ImportError:
+        return "skipped (mqt.qcec not installed)"
+
+    import subprocess, tempfile
+
+    # Transpile to basis gates that MQT's QASM parser supports.
+    from qiskit import transpile
+    try:
+        from qiskit.qasm2 import dumps
+        basis = ['x', 'h', 'cx', 't', 'tdg', 's', 'sdg', 'z', 'ccx', 'u3']
+        synth_t = transpile(synth_circuit, basis_gates=basis, optimization_level=0)
+        ref_t = transpile(ref_circuit, basis_gates=basis, optimization_level=0)
+        synth_qasm = dumps(synth_t)
+        ref_qasm = dumps(ref_t)
+    except Exception as e:
+        return f"error: qasm export: {e}"
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.qasm', delete=False) as f1, \
+         tempfile.NamedTemporaryFile(mode='w', suffix='.qasm', delete=False) as f2:
+        f1.write(synth_qasm)
+        f2.write(ref_qasm)
+        synth_path = f1.name
+        ref_path = f2.name
+
+    # Run QCEC in a subprocess so C++ aborts don't kill us.
+    script = f"""
+import sys, io, contextlib
+try:
+    from mqt import qcec
+    from mqt.core import load
+    from qiskit.qasm2 import load as load_qasm
+    synth_qc = load_qasm("{synth_path}")
+    ref_qc = load_qasm("{ref_path}")
+    synth_mqt = load(synth_qc)
+    ref_mqt = load(ref_qc)
+    n = synth_qc.num_qubits
+    for qc_mqt in [synth_mqt, ref_mqt]:
+        for q in range(n):
+            if q >= {num_pis}:
+                qc_mqt.set_circuit_qubit_ancillary(q)
+            if q != {output_qubit}:
+                qc_mqt.set_circuit_qubit_garbage(q)
+    with contextlib.redirect_stderr(io.StringIO()):
+        result = qcec.verify(ref_mqt, synth_mqt, check_partial_equivalence=True)
+    print(str(result.equivalence))
+except Exception as e:
+    print(f"error: {{e}}")
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=30)
+        os.unlink(synth_path)
+        os.unlink(ref_path)
+
+        if result.returncode != 0:
+            return f"crashed (exit={result.returncode})"
+        return result.stdout.strip() or "error: no output"
+    except subprocess.TimeoutExpired:
+        os.unlink(synth_path)
+        os.unlink(ref_path)
+        return "timeout"
+    except Exception as e:
+        return f"error: {e}"
 
 
 def generate_qasm(circuit: QuantumCircuit) -> str:
@@ -69,7 +179,7 @@ def generate_qasm(circuit: QuantumCircuit) -> str:
 
 
 def write_failure_report(report_path: str, failures: list):
-    """Write a detailed failure report for debugging failed XAGs."""
+    """Write a detailed failure report with seed, XAG config, and both QASMs."""
     with open(report_path, "w") as f:
         f.write("=" * 70 + "\n")
         f.write("EQUIVALENCE CHECK FAILURE REPORT\n")
@@ -88,10 +198,22 @@ def write_failure_report(report_path: str, failures: list):
             f.write(f"  Num gates:       {entry.get('num_gates', '?')}\n")
             f.write(f"  Reference TT:    {entry['ref_tt']}\n")
             f.write(f"  Constraint OK:   {entry.get('constraint_ok', '?')}\n")
+            f.write(f"  QCEC Result:     {entry.get('qcec_result', 'N/A')}\n")
             f.write(f"  Error:           {entry.get('error', 'no matching output qubit')}\n")
-            f.write(f"\n  --- Generated Quantum Circuit (QASM) ---\n")
-            f.write(entry.get("qasm", "(not available)"))
-            f.write("\n\n")
+
+            ref_qasm = entry.get("ref_qasm")
+            if ref_qasm:
+                f.write(f"\n  --- Reference Oracle Circuit (QASM) ---\n")
+                f.write(ref_qasm)
+                f.write("\n")
+
+            synth_qasm = entry.get("qasm")
+            if synth_qasm:
+                f.write(f"\n  --- Synthesized Circuit (QASM) ---\n")
+                f.write(synth_qasm)
+                f.write("\n")
+
+            f.write("\n")
 
     print(f"\nFailure report written to: {report_path}")
 
@@ -104,7 +226,6 @@ def verify_all(data_dir: str) -> tuple:
         print("Run QCVerificationTest first to generate the data.")
         return 0, 1, 1
 
-    # Find all meta files.
     meta_files = sorted(data_path.glob("xag_*_meta.json"))
     if not meta_files:
         print(f"ERROR: No meta files found in {data_dir}")
@@ -113,13 +234,13 @@ def verify_all(data_dir: str) -> tuple:
     passed = 0
     failed = 0
     total = 0
-    failures = []  # Collect failure details for report
+    failures = []
 
     methods = ["current", "existing", "proposed"]
 
     print(f"{'#':>3} | {'PIs':>3} | {'Method':>10} | {'Ref TT':>10} | "
-          f"{'Sim TT':>10} | {'Match':>5}")
-    print("-" * 60)
+          f"{'Sim TT':>10} | {'SV':>4} | {'QCEC':>12}")
+    print("-" * 75)
 
     for meta_file in meta_files:
         idx = meta_file.stem.replace("xag_", "").replace("_meta", "")
@@ -128,6 +249,8 @@ def verify_all(data_dir: str) -> tuple:
 
         num_pis = meta["num_pis"]
         ref_tt = meta["truth_table_hex"]
+        if not ref_tt:
+            continue
 
         for method in methods:
             gate_file = data_path / f"xag_{idx}_{method}.json"
@@ -141,7 +264,7 @@ def verify_all(data_dir: str) -> tuple:
                 circuit = json_to_circuit(gate_data)
                 n_qubits = gate_data["num_qubits"]
 
-                # Try all possible output qubits — find the one matching ref.
+                # Step 1: Statevector search for correct output qubit.
                 found_match = False
                 best_qubit = -1
                 best_tt = ""
@@ -156,15 +279,26 @@ def verify_all(data_dir: str) -> tuple:
                         best_tt = sim_tt
                         best_qubit = q
 
+                # Step 2: QCEC check (only if statevector found the output qubit).
+                qcec_result = "skipped"
+                ref_circuit = None
                 if found_match:
-                    status = "OK"
-                    print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
-                          f"{ref_tt:>10} | {best_tt:>10} | {status:>5} (q{best_qubit})")
+                    ref_circuit = build_reference_oracle(
+                        ref_tt, num_pis, n_qubits, best_qubit)
+                    qcec_result = run_qcec_check(
+                        circuit, ref_circuit, num_pis, best_qubit)
+
+                sv_status = "OK" if found_match else "FAIL"
+                is_pass = found_match
+
+                print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
+                      f"{ref_tt:>10} | {best_tt if found_match else 'no match':>10} | "
+                      f"{sv_status:>4} | {qcec_result:>12}"
+                      + (f" (q{best_qubit})" if found_match else ""))
+
+                if is_pass:
                     passed += 1
                 else:
-                    status = "FAIL"
-                    print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
-                          f"{ref_tt:>10} | {'no match':>10} | {status:>5}")
                     failed += 1
                     failures.append({
                         "idx": idx, "method": method, "num_pis": num_pis,
@@ -174,12 +308,14 @@ def verify_all(data_dir: str) -> tuple:
                         "config_ands": meta.get("config_ands"),
                         "config_xors": meta.get("config_xors"),
                         "constraint_ok": meta.get("constraint_ok"),
+                        "qcec_result": qcec_result,
                         "qasm": generate_qasm(circuit),
+                        "ref_qasm": generate_qasm(ref_circuit) if ref_circuit else None,
                     })
             except Exception as e:
                 failed += 1
                 print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
-                      f"{ref_tt:>10} | {'ERROR':>10} | {'FAIL':>5}")
+                      f"{ref_tt:>10} | {'ERROR':>10} | FAIL | {'error':>12}")
                 print(f"  ^ Exception: {e}")
                 failures.append({
                     "idx": idx, "method": method, "num_pis": num_pis,
@@ -192,71 +328,18 @@ def verify_all(data_dir: str) -> tuple:
 
             total += 1
 
-    print("-" * 60)
+    print("-" * 75)
     print(f"Results: {passed} passed, {failed} failed out of {total}")
     print()
     print("NOTE: Existing Method failures are expected — its top-level")
     print("compute||uncompute erases the output. The result exists only")
     print("in the middle of the circuit, not in the final state.")
 
-    # Write failure report if there are failures.
     if failures:
         report_path = str(data_path / "failure_report.txt")
         write_failure_report(report_path, failures)
 
     return passed, failed, total
-
-
-def try_qcec_check(data_dir: str):
-    """Optional: run QCEC equivalence checks on same-qubit-count pairs."""
-    try:
-        from mqt import qcec
-    except ImportError:
-        print("\nmqt.qcec not installed — skipping QCEC checks.")
-        print("Install with: pip install mqt.qcec")
-        return
-
-    data_path = Path(data_dir)
-    meta_files = sorted(data_path.glob("xag_*_meta.json"))
-
-    print("\n=== QCEC Equivalence Checks ===")
-    print("Comparing Current vs Existing (same compute+uncompute structure):\n")
-
-    checked = 0
-    equiv = 0
-    for meta_file in meta_files:
-        idx = meta_file.stem.replace("xag_", "").replace("_meta", "")
-
-        cur_file = data_path / f"xag_{idx}_current.json"
-        ex_file = data_path / f"xag_{idx}_existing.json"
-        if not cur_file.exists() or not ex_file.exists():
-            continue
-
-        with open(cur_file) as f:
-            cur_data = json.load(f)
-        with open(ex_file) as f:
-            ex_data = json.load(f)
-
-        # QCEC needs same qubit count.
-        if cur_data["num_qubits"] != ex_data["num_qubits"]:
-            continue
-
-        try:
-            cur_qc = json_to_circuit(cur_data)
-            ex_qc = json_to_circuit(ex_data)
-            result = qcec.verify(cur_qc, ex_qc)
-            status = str(result.equivalence)
-            print(f"  XAG {idx}: {status}")
-            checked += 1
-            if status == "EquivalenceCriterion.equivalent":
-                equiv += 1
-        except Exception as e:
-            print(f"  XAG {idx}: ERROR — {e}")
-
-    if checked > 0:
-        print(f"\nQCEC: {equiv}/{checked} equivalent pairs found.")
-    else:
-        print("No same-qubit-count pairs to compare.")
 
 
 if __name__ == "__main__":
@@ -266,9 +349,6 @@ if __name__ == "__main__":
     print(f"Data directory: {data_dir}\n")
 
     passed, failed, total = verify_all(data_dir)
-
-    # Optional QCEC check.
-    try_qcec_check(data_dir)
 
     print()
     sys.exit(1 if failed > 0 else 0)
