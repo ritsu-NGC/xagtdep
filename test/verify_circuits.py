@@ -279,12 +279,15 @@ def verify_all(data_dir: str) -> tuple:
                         best_tt = sim_tt
                         best_qubit = q
 
-                # Step 2: QCEC check (only if statevector found the output qubit).
+                # Step 2: Build reference oracle and run QCEC.
+                # Always build the reference oracle so the failure report
+                # can include both QASMs for comparison (even when SV fails).
                 qcec_result = "skipped"
-                ref_circuit = None
+                output_q = best_qubit if found_match else meta.get(
+                    f"output_qubit_{method}", n_qubits - 1)
+                ref_circuit = build_reference_oracle(
+                    ref_tt, num_pis, n_qubits, output_q)
                 if found_match:
-                    ref_circuit = build_reference_oracle(
-                        ref_tt, num_pis, n_qubits, best_qubit)
                     qcec_result = run_qcec_check(
                         circuit, ref_circuit, num_pis, best_qubit)
 
@@ -310,7 +313,7 @@ def verify_all(data_dir: str) -> tuple:
                         "constraint_ok": meta.get("constraint_ok"),
                         "qcec_result": qcec_result,
                         "qasm": generate_qasm(circuit),
-                        "ref_qasm": generate_qasm(ref_circuit) if ref_circuit else None,
+                        "ref_qasm": generate_qasm(ref_circuit),
                     })
             except Exception as e:
                 failed += 1
