@@ -93,13 +93,36 @@ def build_reference_oracle(tt_hex: str, num_pis: int,
     return qc
 
 
+def get_pi_po_lists(num_pis: int, output_qubit: int) -> tuple:
+    """Return (primary_inputs, primary_outputs) qubit index lists.
+
+    Primary inputs (PIs) carry input data — qubits 0..num_pis-1.
+    Primary outputs (POs) carry results we verify — only output_qubit.
+    All other qubits are ancilla (start at |0>) and garbage (don't-care).
+    """
+    primary_inputs = list(range(num_pis))
+    primary_outputs = [output_qubit]
+    return primary_inputs, primary_outputs
+
+
 def run_qcec_check(synth_circuit: QuantumCircuit, ref_circuit: QuantumCircuit,
                    num_pis: int, output_qubit: int) -> str:
-    """Run QCEC equivalence check between synthesized and reference circuits.
+    """Run QCEC partial equivalence check between two circuits.
 
-    Runs in a subprocess to prevent QCEC C++ crashes (std::out_of_range
-    abort on certain circuit configurations) from killing the main process.
-    Communicates via temporary QASM files.
+    QCEC partial equivalence (mqt.qcec >= 2.5) compares circuits
+    while ignoring contributions of garbage qubits. Per QCEC docs:
+      - Primary inputs (PIs) are specified by NOT marking qubits ancillary.
+        See: mqt.core.ir.QuantumComputation.set_circuit_qubit_ancillary()
+      - Primary outputs (POs) are specified by NOT marking qubits garbage.
+        See: mqt.core.ir.QuantumComputation.set_circuit_qubit_garbage()
+      - check_partial_equivalence=True enables the partial equivalence checker.
+
+    For our XAG synthesis:
+      - PIs = qubits 0..num_pis-1 (carry input bits)
+      - POs = [output_qubit] only (the qubit holding f(x))
+      - All other qubits start at |0> and are don't-care at output.
+
+    Runs in a subprocess to prevent QCEC C++ crashes from killing main.
     """
     try:
         from mqt import qcec  # noqa: F401 — check installed
@@ -107,6 +130,14 @@ def run_qcec_check(synth_circuit: QuantumCircuit, ref_circuit: QuantumCircuit,
         return "skipped (mqt.qcec not installed)"
 
     import subprocess, tempfile
+
+    # Sanity check: both circuits must have the same qubit count.
+    if synth_circuit.num_qubits != ref_circuit.num_qubits:
+        return (f"error: qubit count mismatch "
+                f"(synth={synth_circuit.num_qubits}, "
+                f"ref={ref_circuit.num_qubits})")
+
+    primary_inputs, primary_outputs = get_pi_po_lists(num_pis, output_qubit)
 
     # Transpile to basis gates that MQT's QASM parser supports.
     from qiskit import transpile
@@ -128,6 +159,8 @@ def run_qcec_check(synth_circuit: QuantumCircuit, ref_circuit: QuantumCircuit,
         ref_path = f2.name
 
     # Run QCEC in a subprocess so C++ aborts don't kill us.
+    # The script explicitly specifies primary inputs and primary outputs
+    # via QCEC's qubit-metadata API.
     script = f"""
 import sys, io, contextlib
 try:
@@ -139,12 +172,22 @@ try:
     synth_mqt = load(synth_qc)
     ref_mqt = load(ref_qc)
     n = synth_qc.num_qubits
+
+    # Primary inputs (PIs) — qubits that carry input data.
+    primary_inputs = {primary_inputs!r}
+    # Primary outputs (POs) — qubits whose final state we verify.
+    primary_outputs = {primary_outputs!r}
+
     for qc_mqt in [synth_mqt, ref_mqt]:
+        # Mark non-PI qubits as ancillary (initialised at |0>).
         for q in range(n):
-            if q >= {num_pis}:
+            if q not in primary_inputs:
                 qc_mqt.set_circuit_qubit_ancillary(q)
-            if q != {output_qubit}:
+        # Mark non-PO qubits as garbage (final state is don't-care).
+        for q in range(n):
+            if q not in primary_outputs:
                 qc_mqt.set_circuit_qubit_garbage(q)
+
     with contextlib.redirect_stderr(io.StringIO()):
         result = qcec.verify(ref_mqt, synth_mqt, check_partial_equivalence=True)
     print(str(result.equivalence))
@@ -198,6 +241,8 @@ def write_failure_report(report_path: str, failures: list):
             f.write(f"  Num gates:       {entry.get('num_gates', '?')}\n")
             f.write(f"  Reference TT:    {entry['ref_tt']}\n")
             f.write(f"  Constraint OK:   {entry.get('constraint_ok', '?')}\n")
+            f.write(f"  Primary inputs:  {entry.get('primary_inputs', 'N/A')}\n")
+            f.write(f"  Primary outputs: {entry.get('primary_outputs', 'N/A')}\n")
             f.write(f"  QCEC Result:     {entry.get('qcec_result', 'N/A')}\n")
             f.write(f"  Error:           {entry.get('error', 'no matching output qubit')}\n")
 
@@ -303,6 +348,7 @@ def verify_all(data_dir: str) -> tuple:
                     passed += 1
                 else:
                     failed += 1
+                    pi_list, po_list = get_pi_po_lists(num_pis, output_q)
                     failures.append({
                         "idx": idx, "method": method, "num_pis": num_pis,
                         "ref_tt": ref_tt, "num_gates": meta.get("num_gates"),
@@ -311,6 +357,8 @@ def verify_all(data_dir: str) -> tuple:
                         "config_ands": meta.get("config_ands"),
                         "config_xors": meta.get("config_xors"),
                         "constraint_ok": meta.get("constraint_ok"),
+                        "primary_inputs": pi_list,
+                        "primary_outputs": po_list,
                         "qcec_result": qcec_result,
                         "qasm": generate_qasm(circuit),
                         "ref_qasm": generate_qasm(ref_circuit),
