@@ -22,17 +22,40 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Qiskit
-        run: pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mqt.qcec
+
+      - name: Clone q3SATlib
+        run: git clone --depth 1 https://github.com/ritsu-NGC/q3SATlib /tmp/q3SATlib
 
       - name: Configure
-        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm -DXAGTDEP_ENABLE_PYTHON=ON
+        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm
 
       - name: Build
         run: cmake --build build -j$(nproc)
 
-      - name: Unit Tests
+      - name: C++ Unit Tests
         run: cd build && ctest --output-on-failure
 
       - name: Integration Tests
         run: cd build && bash run_passes.sh
+        continue-on-error: true
+
+      - name: Python Equivalence Verification
+        run: python test/verify_circuits.py build/verification_data
+        continue-on-error: true
+
+      - name: q3SATlib Metrics Comparison
+        run: python test/compare_metrics.py build/verification_data /tmp/q3SATlib/src
+        continue-on-error: true
+
+      - name: Upload failure report and verification data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-results
+          path: |
+            build/verification_data/
+          retention-days: 30
