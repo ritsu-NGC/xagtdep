@@ -246,6 +246,16 @@ def write_failure_report(report_path: str, failures: list):
             f.write(f"  QCEC Result:     {entry.get('qcec_result', 'N/A')}\n")
             f.write(f"  Error:           {entry.get('error', 'no matching output qubit')}\n")
 
+            # Self-documenting reproducer command.
+            seed = entry.get('seed', 'N/A')
+            cp = entry.get('config_pis', '?')
+            ca = entry.get('config_ands', '?')
+            cx = entry.get('config_xors', '?')
+            m = entry.get('method', 'all')
+            f.write(f"  Reproduce:       ./build/QCVerificationTest "
+                    f"--seed {seed} --pis {cp} --ands {ca} --xors {cx} "
+                    f"--method {m} --verify\n")
+
             ref_qasm = entry.get("ref_qasm")
             if ref_qasm:
                 f.write(f"\n  --- Reference Oracle Circuit (QASM) ---\n")
