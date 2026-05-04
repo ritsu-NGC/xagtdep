@@ -8,6 +8,7 @@ set(QC_SOURCES
     XAGToGateList.cpp
     ExistingMethod.cpp
     ProposedMethod.cpp
+    RandomXAG.cpp
 )
 
 if(XAGTDEP_ENABLE_PYTHON)
