@@ -15,6 +15,7 @@ Makefile
 # Test executables
 *Test
 !*Test.cpp
+!test/
 
 # CodeQL artifacts
 _codeql_build_dir/
@@ -30,3 +31,9 @@ _codeql_detected_source_root
 # OS files
 .DS_Store
 Thumbs.db
+
+local/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd

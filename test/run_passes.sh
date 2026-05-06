@@ -97,14 +97,16 @@ $OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libNewMethodLib.$LIB_EXT" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
-echo "4. Running QC Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libQCLib.$LIB_EXT" \
+echo "4. Running QC Pass (depends on NewMethod)..."
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libNewMethodLib.$LIB_EXT" \
+    -load-pass-plugin="$BUILD_DIR/lib/libQCLib.$LIB_EXT" \
     -passes="qc" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""
 
-echo "5. Running XAG Pass..."
-$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libXAGLib.$LIB_EXT" \
+echo "5. Running XAG Pass (depends on NewMethod)..."
+$OPT_CMD -load-pass-plugin="$BUILD_DIR/lib/libNewMethodLib.$LIB_EXT" \
+    -load-pass-plugin="$BUILD_DIR/lib/libXAGLib.$LIB_EXT" \
     -passes="xag" \
     -disable-output "$TEST_INPUT" 2>&1 | head -20
 echo ""

@@ -11,14 +11,14 @@ using namespace llvm;
 using namespace xagtdep;
 
 // ── Core algorithm ────────────────────────────────────────────────────────
-// Run caterpillar's T-depth minimization strategy on ctx.xag.
+// Run Meuli low-depth strategy on ctx.xag.
 // Populates ctx.steps and sets ctx.optimized = true on success.
 void XAG::optimize(XagContext &ctx) {
   errs() << "[XAG] BEFORE: PIs=" << ctx.xag.num_pis()
          << " POs=" << ctx.xag.num_pos() << " Gates=" << ctx.xag.num_gates()
          << "\n";
 
-  // Algorithm 2 from Meuli et al. (2022) — T-depth minimization.
+  // Meuli low-depth strategy (Meuli et al. 2022, doi:10.1038/s41534-021-00514-y).
   // Processes the XAG level-by-level (ASAP), copies shared AND inputs to
   // fresh ancilla qubits so all ANDs in a level execute in one T-stage.
   // T-depth of resulting circuit = AND-depth of XAG.

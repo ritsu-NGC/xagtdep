@@ -1,18 +1,25 @@
 // QC.cpp
 #include "QC.h"
 #include "NewMethod.h"
+#include "ExistingMethod.h"
+#include "ProposedMethod.h"
+#include "QCGateList.h"
+#include "XAGToGateList.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/raw_ostream.h"
+
+#ifdef XAGTDEP_ENABLE_PYTHON
+#include "PythonBridge.h"
+#endif
 
 using namespace llvm;
 using namespace xagtdep;
 
 // ── Core algorithm ────────────────────────────────────────────────────────
 // Consume the optimized XagContext and synthesize a quantum circuit.
-// will add caterpillar::logic_network_synthesis here.
-void QC::evaluate(const XagContext &ctx) {
+void QC::evaluate(const XagContext &ctx, SynthesisAlgorithm algo) {
   errs() << "[QC] Received XAG: "
          << "PIs=" << ctx.xag.num_pis() << " POs=" << ctx.xag.num_pos()
          << " Gates=" << ctx.xag.num_gates()
@@ -24,10 +31,38 @@ void QC::evaluate(const XagContext &ctx) {
     return;
   }
 
-  // placeholder — caterpillar::logic_network_synthesis goes here.
-  errs() << "[QC] Quantum circuit synthesis placeholder. "
-         << "Will iterate " << ctx.steps.size()
-         << " compute/uncompute steps in Phase 4.\n";
+  // Select synthesis algorithm.
+  QCGateList gateList;
+  switch (algo) {
+  case SynthesisAlgorithm::Current:
+    errs() << "[QC] Using Current (XAGToGateList) algorithm.\n";
+    gateList = XAGToGateList::translate(ctx);
+    break;
+  case SynthesisAlgorithm::ExistingMethod:
+    errs() << "[QC] Using Existing Method (Algorithm 1).\n";
+    gateList = ExistingMethod::translate(ctx);
+    break;
+  case SynthesisAlgorithm::ProposedMethod:
+    errs() << "[QC] Using Proposed Method (Algorithm 2).\n";
+    gateList = ProposedMethod::translate(ctx);
+    break;
+  }
+  std::string json = gateList.toJSON();
+  errs() << "[QC] Gate list: " << json << "\n";
+
+#ifdef XAGTDEP_ENABLE_PYTHON
+  std::string qasm = PythonBridge::callQiskitSynthesis(json);
+  if (!qasm.empty()) {
+    qasm_output_ = qasm;
+    errs() << "[QC] QASM output:\n" << qasm_output_ << "\n";
+  } else {
+    errs() << "[QC] WARNING: Qiskit synthesis failed, storing raw gate list.\n";
+    qasm_output_ = json;
+  }
+#else
+  qasm_output_ = json;
+  errs() << "[QC] Python disabled, raw gate list stored as output.\n";
+#endif
 }
 
 // ── LLVM Transform pass — delegates to QC::evaluate() ────────────────────
