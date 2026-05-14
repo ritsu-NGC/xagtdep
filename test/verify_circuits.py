@@ -391,10 +391,6 @@ def verify_all(data_dir: str) -> tuple:
 
     print("-" * 75)
     print(f"Results: {passed} passed, {failed} failed out of {total}")
-    print()
-    print("NOTE: Existing Method failures are expected — its top-level")
-    print("compute||uncompute erases the output. The result exists only")
-    print("in the middle of the circuit, not in the final state.")
 
     if failures:
         report_path = str(data_path / "failure_report.txt")
