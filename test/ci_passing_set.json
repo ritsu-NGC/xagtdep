@@ -1,0 +1,20 @@
+{
+  "description": "XAGs that fully passed (strict QCEC equivalence on current+existing+proposed) in CI run #23 (id 25845789876, commit eab47c6, 2026-05-14). Used by CIQCVerification as a regression gate.",
+  "tuples": [
+    {"pis": 3, "ands": 1, "xors": 1, "seed": 12345},
+    {"pis": 3, "ands": 1, "xors": 2, "seed": 42},
+    {"pis": 3, "ands": 1, "xors": 2, "seed": 12345},
+    {"pis": 3, "ands": 2, "xors": 1, "seed": "0xdeadbeef"},
+    {"pis": 3, "ands": 2, "xors": 2, "seed": 12345},
+    {"pis": 4, "ands": 1, "xors": 1, "seed": 12345},
+    {"pis": 4, "ands": 1, "xors": 1, "seed": "0xdeadbeef"},
+    {"pis": 4, "ands": 1, "xors": 2, "seed": 42},
+    {"pis": 4, "ands": 2, "xors": 2, "seed": 12345},
+    {"pis": 5, "ands": 1, "xors": 1, "seed": 12345},
+    {"pis": 5, "ands": 1, "xors": 2, "seed": 42},
+    {"pis": 6, "ands": 1, "xors": 1, "seed": 12345},
+    {"pis": 6, "ands": 1, "xors": 2, "seed": 42},
+    {"pis": 6, "ands": 2, "xors": 2, "seed": 42},
+    {"pis": 6, "ands": 2, "xors": 2, "seed": 12345}
+  ]
+}

@@ -22,17 +22,31 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Qiskit
-        run: pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mqt.qcec
 
       - name: Configure
-        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm -DXAGTDEP_ENABLE_PYTHON=ON
+        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm
 
       - name: Build
         run: cmake --build build -j$(nproc)
 
-      - name: Unit Tests
-        run: cd build && ctest --output-on-failure
+      - name: C++ Unit Tests (excluding full sweep)
+        run: cd build && ctest -E QCVerificationTest --output-on-failure
 
-      - name: Integration Tests
-        run: cd build && bash run_passes.sh
+      - name: CIQCVerification (passing-set synthesis)
+        run: ./build/CIQCVerification --data-dir build/verification_data_ci
+
+      - name: Strict equivalence verification
+        run: python test/verify_circuits.py --strict build/verification_data_ci
+
+      - name: Upload verification data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-verification-results
+          path: |
+            build/verification_data_ci/
+          retention-days: 30

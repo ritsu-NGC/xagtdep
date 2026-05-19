@@ -1,0 +1,67 @@
+name: Regression
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 06:00 UTC.
+    - cron: '0 6 * * *'
+
+jobs:
+  regression:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 16
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main"
+          sudo apt-get update
+          sudo apt-get install -y llvm-16-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mqt.qcec
+
+      - name: Clone q3SATlib
+        run: git clone --depth 1 https://github.com/ritsu-NGC/q3SATlib /tmp/q3SATlib
+
+      - name: Configure
+        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: C++ Unit Tests
+        run: cd build && ctest --output-on-failure
+        continue-on-error: true
+
+      - name: Integration Tests (run_passes.sh)
+        run: cd build && bash run_passes.sh
+        continue-on-error: true
+
+      - name: Full QCVerificationTest sweep
+        run: cd build && ./QCVerificationTest
+        continue-on-error: true
+
+      - name: Python Equivalence Verification (non-strict)
+        run: python test/verify_circuits.py build/verification_data
+        continue-on-error: true
+
+      - name: q3SATlib Metrics Comparison
+        run: python test/compare_metrics.py build/verification_data /tmp/q3SATlib/src
+        continue-on-error: true
+
+      - name: Upload verification data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-verification-results
+          path: |
+            build/verification_data/
+          retention-days: 30

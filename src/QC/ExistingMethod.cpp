@@ -6,7 +6,7 @@
 //              → Fig 1  (AND at overall output, with A/A† and CC-Z)
 //              → Fig 11 (one input PI, with F sub-circuit and CC-iZ)
 //
-// Top-level: QC = compute || uncompute (adjoint of compute appended).
+// Top-level: QC = parseXAG(xag). No top-level uncompute (per updated SPEC).
 
 #include "ExistingMethod.h"
 #include "llvm/Support/raw_ostream.h"
@@ -29,13 +29,10 @@ QCGateList ExistingMethod::translate(const XagContext &ctx) {
     t.po_nodes_.insert(ctx.xag.node_to_index(ctx.xag.get_node(signal)));
   });
 
-  // Compute phase: process each primary output.
+  // Process each primary output. No top-level uncompute — updated SPEC
+  // changed Algorithm 1 to QC = parseXAG(xag) directly (no compute||uncompute).
+  // Local A/A† compute-uncompute inside Fig 1 is still emitted by emitAndOutput.
   ctx.xag.foreach_po([&](auto signal) { t.processSignal(signal); });
-
-  size_t computeEnd = t.result_.gates.size();
-
-  // Uncompute phase: append adjoint of entire compute circuit.
-  t.appendAdjoint(0, computeEnd);
 
   t.result_.num_qubits = t.next_qubit_;
   t.result_.num_ancillas = t.next_qubit_ - ctx.xag.num_pis();
