@@ -273,8 +273,13 @@ def write_failure_report(report_path: str, failures: list):
     print(f"\nFailure report written to: {report_path}")
 
 
-def verify_all(data_dir: str) -> tuple:
-    """Verify all circuits in data_dir. Returns (passed, failed, total)."""
+def verify_all(data_dir: str, strict: bool = False) -> tuple:
+    """Verify all circuits in data_dir. Returns (passed, failed, total).
+
+    When strict=True, a row counts as passing only when QCEC returns the literal
+    "EquivalenceCriterion.equivalent" — `equivalent_up_to_global_phase`,
+    `not_equivalent`, crashes, timeouts, and errors all count as failure.
+    """
     data_path = Path(data_dir)
     if not data_path.exists():
         print(f"ERROR: Data directory {data_dir} does not exist.")
@@ -348,6 +353,8 @@ def verify_all(data_dir: str) -> tuple:
 
                 sv_status = "OK" if found_match else "FAIL"
                 is_pass = found_match
+                if strict:
+                    is_pass = is_pass and qcec_result == "EquivalenceCriterion.equivalent"
 
                 print(f"{idx:>3} | {num_pis:>3} | {method:>10} | "
                       f"{ref_tt:>10} | {best_tt if found_match else 'no match':>10} | "
@@ -400,12 +407,23 @@ def verify_all(data_dir: str) -> tuple:
 
 
 if __name__ == "__main__":
-    data_dir = sys.argv[1] if len(sys.argv) > 1 else "build/verification_data"
+    import argparse
+    parser = argparse.ArgumentParser(description="Verify synthesized quantum circuits.")
+    parser.add_argument("data_dir", nargs="?", default="build/verification_data",
+                        help="Directory containing xag_*_meta.json + per-method gate JSONs.")
+    parser.add_argument("--strict", action="store_true",
+                        help="Require QCEC == EquivalenceCriterion.equivalent (literal). "
+                             "Treats equivalent_up_to_global_phase, not_equivalent, "
+                             "crashes, timeouts, and errors as failure.")
+    args = parser.parse_args()
 
     print("=== Quantum Circuit Verification ===\n")
-    print(f"Data directory: {data_dir}\n")
+    print(f"Data directory: {args.data_dir}")
+    if args.strict:
+        print("Mode: strict (QCEC equivalence required)")
+    print()
 
-    passed, failed, total = verify_all(data_dir)
+    passed, failed, total = verify_all(args.data_dir, strict=args.strict)
 
     print()
     sys.exit(1 if failed > 0 else 0)
