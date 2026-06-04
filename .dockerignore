@@ -1,0 +1,10 @@
+# Keep the build context small and the image cache stable.
+.git
+build*/
+verification_data*/
+doc/
+*.pptx
+*.pdf
+.claude/
+.vscode/
+.idea/
