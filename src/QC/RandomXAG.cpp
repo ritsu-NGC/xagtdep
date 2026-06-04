@@ -7,37 +7,11 @@
 //   4. Creating a PO from the last gate output
 
 #include "RandomXAG.h"
-#include <cstdint>
-#include <limits>
+#include <algorithm>
 #include <random>
-#include <utility>
 #include <vector>
 
 namespace xagtdep {
-
-namespace {
-
-// Draw a uniformly-distributed integer in [0, n) directly from the engine.
-//
-// std::uniform_int_distribution is implementation-defined: libstdc++ (gcc) and
-// libc++ (clang) use different mapping algorithms, so the same mt19937_64 seed
-// yields different values — and therefore different XAGs — across platforms.
-// This unbiased rejection method has fixed behaviour everywhere, restoring
-// cross-platform reproducibility for a given seed.
-uint64_t bounded(std::mt19937_64 &rng, uint64_t n) {
-  // n is always >= 1 at the call sites; guard defensively anyway.
-  if (n <= 1)
-    return 0;
-  const uint64_t max = std::numeric_limits<uint64_t>::max();
-  const uint64_t limit = max - (max % n); // largest multiple of n (exclusive).
-  uint64_t r;
-  do {
-    r = rng();
-  } while (r >= limit);
-  return r % n;
-}
-
-} // namespace
 
 mockturtle::xag_network generate_random_xag(const RandomXAGParams &params) {
   mockturtle::xag_network xag;
@@ -55,9 +29,11 @@ mockturtle::xag_network generate_random_xag(const RandomXAGParams &params) {
   }
 
   auto pick = [&](const std::vector<mockturtle::xag_network::signal> &pool) {
-    auto sig = pool[bounded(rng, pool.size())];
+    std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
+    auto sig = pool[dist(rng)];
     // Randomly complement with 25% probability.
-    if (bounded(rng, 4) == 0)
+    std::uniform_int_distribution<int> comp(0, 3);
+    if (comp(rng) == 0)
       sig = !sig;
     return sig;
   };
@@ -69,13 +45,7 @@ mockturtle::xag_network generate_random_xag(const RandomXAGParams &params) {
     schedule.push_back('x');
   for (uint32_t i = 0; i < params.num_and_gates; ++i)
     schedule.push_back('a');
-  // Fisher–Yates shuffle. std::shuffle is implementation-defined and would
-  // otherwise reintroduce the cross-platform divergence; bounded() keeps this
-  // deterministic for a given seed.
-  for (size_t i = schedule.size(); i > 1; --i) {
-    size_t j = bounded(rng, i);
-    std::swap(schedule[i - 1], schedule[j]);
-  }
+  std::shuffle(schedule.begin(), schedule.end(), rng);
 
   for (char op : schedule) {
     if (all_signals.size() < 2)

@@ -1,26 +1,20 @@
 {
-  "description": "XAGs where current+existing+proposed all pass strict QCEC equivalence. Regenerated 2026-06-04 from the deterministic-RNG sweep (RandomXAG bounded()/Fisher-Yates fix) on Ubuntu gcc+libstdc++, qiskit 2.4.1 + mqt.qcec. SUPERSEDES CI run #23 (commit eab47c6): those tuples were produced by the old platform-dependent RNG and now generate different circuits. 21 of 42 sweep tuples pass; the remaining 21 fail (19 proposed-method not_equivalent, 2 all-method statevector mismatches) — see PR notes. Used by CIQCVerification as a regression gate; confirm against the CI matrix before relying on it.",
+  "description": "XAGs that fully passed (strict QCEC equivalence on current+existing+proposed) in CI run #23 (id 25845789876, commit eab47c6, 2026-05-14). Used by CIQCVerification as a regression gate.",
   "tuples": [
-    {"pis": 3, "ands": 1, "xors": 1, "seed": 42},
     {"pis": 3, "ands": 1, "xors": 1, "seed": 12345},
-    {"pis": 3, "ands": 1, "xors": 1, "seed": "0xdeadbeef"},
     {"pis": 3, "ands": 1, "xors": 2, "seed": 42},
     {"pis": 3, "ands": 1, "xors": 2, "seed": 12345},
-    {"pis": 3, "ands": 2, "xors": 1, "seed": 42},
+    {"pis": 3, "ands": 2, "xors": 1, "seed": "0xdeadbeef"},
     {"pis": 3, "ands": 2, "xors": 2, "seed": 12345},
     {"pis": 4, "ands": 1, "xors": 1, "seed": 12345},
+    {"pis": 4, "ands": 1, "xors": 1, "seed": "0xdeadbeef"},
     {"pis": 4, "ands": 1, "xors": 2, "seed": 42},
-    {"pis": 4, "ands": 1, "xors": 2, "seed": "0xdeadbeef"},
-    {"pis": 4, "ands": 2, "xors": 1, "seed": 42},
-    {"pis": 4, "ands": 2, "xors": 1, "seed": "0xdeadbeef"},
     {"pis": 4, "ands": 2, "xors": 2, "seed": 12345},
-    {"pis": 5, "ands": 1, "xors": 1, "seed": 42},
+    {"pis": 5, "ands": 1, "xors": 1, "seed": 12345},
     {"pis": 5, "ands": 1, "xors": 2, "seed": 42},
-    {"pis": 5, "ands": 1, "xors": 2, "seed": 12345},
-    {"pis": 5, "ands": 1, "xors": 2, "seed": "0xdeadbeef"},
-    {"pis": 5, "ands": 2, "xors": 2, "seed": "0xdeadbeef"},
     {"pis": 6, "ands": 1, "xors": 1, "seed": 12345},
     {"pis": 6, "ands": 1, "xors": 2, "seed": 42},
-    {"pis": 6, "ands": 2, "xors": 2, "seed": "0xdeadbeef"}
+    {"pis": 6, "ands": 2, "xors": 2, "seed": 42},
+    {"pis": 6, "ands": 2, "xors": 2, "seed": 12345}
   ]
 }
