@@ -1,6 +1,9 @@
 // ProposedMethod.h — Algorithm 2 ("Proposed Method") XAG-to-quantum-circuit
-// translator. Uses relative-phase Toffoli (CC-iωZ via Figs 8/9/10) and
-// NO top-level uncompute.
+// translator. AND gadgets use the 3-T relative-phase CC-iωZ/CC-iωZ† ladders
+// (Figs 9/10), the 4-T relative-phase Toffoli (Fig 8) and the 4-T
+// dirty-ancilla AND (Fig 12); NO top-level uncompute. The AND result
+// materialises on the H-conjugated |0⟩ wire (see ProposedMethod.cpp header
+// comment for the full semantics).
 
 #ifndef PROPOSEDMETHOD_H
 #define PROPOSEDMETHOD_H
@@ -9,6 +12,7 @@
 #include "XagContext.h"
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace xagtdep {
 
@@ -21,22 +25,27 @@ private:
   explicit ProposedMethod(const mockturtle::xag_network &xag);
 
   // ── Recursive traversal ──────────────────────────────────────────────
+  /// Top-level (PO) entry: applies a trailing X for complemented POs.
   uint32_t processSignal(mockturtle::xag_network::signal sig);
+  /// Internal entry: returns {qubit, complemented} WITHOUT emitting the
+  /// complement — call sites bracket the consuming gate(s) with X…X.
+  std::pair<uint32_t, bool>
+  resolveSignal(mockturtle::xag_network::signal sig);
   uint32_t processNode(mockturtle::xag_network::node node);
 
   // ── Circuit generators (one per algorithm case) ──────────────────────
   uint32_t processXorNode(mockturtle::xag_network::node node);  // Fig 5
   uint32_t processAndNode(mockturtle::xag_network::node node);  // routes to:
   uint32_t emitAndBothPI(mockturtle::xag_network::node node,    // Fig 8
-                         uint32_t q_a, uint32_t q_b);
+                         std::vector<mockturtle::xag_network::signal> &fanins);
   uint32_t emitAndOutput(mockturtle::xag_network::node node,    // Fig 2
                          std::vector<mockturtle::xag_network::signal> &fanins);
   uint32_t emitAndOnePI(mockturtle::xag_network::node node,     // Fig 12
                         std::vector<mockturtle::xag_network::signal> &fanins);
 
   // ── Decomposition helpers (exact gate sequences from figures) ────────
-  void emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2);    // Fig 9
-  void emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2);  // Fig 10
+  void emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2);    // Fig 9 (3 T)
+  void emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2);  // Fig 10 (3 T)
 
   // ── Utility ──────────────────────────────────────────────────────────
   bool isSimpleNode(mockturtle::xag_network::node node) const;

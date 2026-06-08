@@ -6,8 +6,10 @@
 
 #include "QCGateList.h"
 #include "XagContext.h"
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace xagtdep {
 
@@ -19,9 +21,14 @@ public:
 private:
   explicit XAGToGateList(const mockturtle::xag_network &xag);
 
-  /// Process a signal (node + possible complement). Returns the qubit holding
-  /// the result; emits X gate if the signal is complemented.
+  /// Top-level (PO) entry: returns the qubit holding the result; emits a
+  /// trailing X on it if the signal is complemented.
   uint32_t processSignal(mockturtle::xag_network::signal sig);
+
+  /// Internal entry: returns {qubit, complemented} WITHOUT emitting the
+  /// complement — call sites X-bracket the consuming gate instead.
+  std::pair<uint32_t, bool>
+  resolveSignal(mockturtle::xag_network::signal sig);
 
   /// Process a node. Returns the qubit holding the node's output value.
   uint32_t processNode(mockturtle::xag_network::node node);

@@ -10,6 +10,7 @@
 #include "XAGToGateList.h"
 #include "XagContext.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <kitty/dynamic_truth_table.hpp>
@@ -22,6 +23,7 @@ namespace {
 
 struct Metrics {
   uint32_t t_count = 0;
+  uint32_t t_depth = 0;
   uint32_t cnot_count = 0;
   uint32_t h_count = 0;
   uint32_t total = 0;
@@ -32,27 +34,49 @@ Metrics computeMetrics(const xagtdep::QCGateList &gl) {
   Metrics m;
   m.total = gl.gates.size();
   m.qubits = gl.num_qubits;
+  // ASAP T-depth: every gate is scheduled at the max layer of its qubits;
+  // T/Tdg start a new T-layer (max+1), all other gates only propagate the
+  // max. Counts explicit T/Tdg only — abstract Toffolis (Current method)
+  // contribute 0 here; their decomposed cost is reported separately.
+  std::vector<uint32_t> layer(gl.num_qubits, 0);
+  auto touch = [&](const xagtdep::GateOp &g, bool isT) {
+    uint32_t mx = layer[g.target];
+    for (uint32_t c : g.controls)
+      mx = std::max(mx, layer[c]);
+    if (isT)
+      mx += 1;
+    layer[g.target] = mx;
+    for (uint32_t c : g.controls)
+      layer[c] = mx;
+  };
   for (const auto &g : gl.gates) {
     switch (g.type) {
     case xagtdep::GateType::T:
     case xagtdep::GateType::Tdg:
       m.t_count++;
+      touch(g, true);
       break;
     case xagtdep::GateType::CNOT:
       m.cnot_count++;
+      touch(g, false);
       break;
     case xagtdep::GateType::H:
       m.h_count++;
+      touch(g, false);
       break;
     default:
+      touch(g, false);
       break;
     }
   }
+  for (uint32_t l : layer)
+    m.t_depth = std::max(m.t_depth, l);
   return m;
 }
 
 std::string metricsJSON(const Metrics &m) {
   return "{\"t_count\":" + std::to_string(m.t_count) +
+         ",\"t_depth\":" + std::to_string(m.t_depth) +
          ",\"cnot_count\":" + std::to_string(m.cnot_count) +
          ",\"h_count\":" + std::to_string(m.h_count) +
          ",\"total\":" + std::to_string(m.total) +
@@ -65,12 +89,6 @@ bool writeFile(const std::string &path, const std::string &content) {
     return false;
   f << content;
   return f.good();
-}
-
-uint32_t findOutputQubit(const xagtdep::QCGateList &gl) {
-  if (gl.gates.empty())
-    return 0;
-  return gl.gates.back().target;
 }
 
 } // namespace
@@ -157,9 +175,9 @@ bool runOneXag(uint32_t pis, uint32_t ands, uint32_t xors, uint64_t seed,
         ",\"num_gates\":" + std::to_string(xag.num_gates()) +
         ",\"truth_table_hex\":\"" + tt_hex + "\"" +
         ",\"constraint_ok\":" + (constraint_ok ? "true" : "false") +
-        ",\"output_qubit_current\":" + std::to_string(findOutputQubit(gl_cur)) +
-        ",\"output_qubit_existing\":" + std::to_string(findOutputQubit(gl_ex)) +
-        ",\"output_qubit_proposed\":" + std::to_string(findOutputQubit(gl_pr)) +
+        ",\"output_qubit_current\":" + std::to_string(gl_cur.output_qubit) +
+        ",\"output_qubit_existing\":" + std::to_string(gl_ex.output_qubit) +
+        ",\"output_qubit_proposed\":" + std::to_string(gl_pr.output_qubit) +
         ",\"metrics_current\":" + metricsJSON(m_cur) +
         ",\"metrics_existing\":" + metricsJSON(m_ex) +
         ",\"metrics_proposed\":" + metricsJSON(m_pr) + "}";

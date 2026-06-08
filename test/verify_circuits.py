@@ -324,20 +324,37 @@ def verify_all(data_dir: str, strict: bool = False) -> tuple:
                 circuit = json_to_circuit(gate_data)
                 n_qubits = gate_data["num_qubits"]
 
-                # Step 1: Statevector search for correct output qubit.
+                # Step 1: statevector check. Try the declared output qubit
+                # first (gate list "output_qubit", mirrored in meta as
+                # output_qubit_<method>), then fall back to a brute search and
+                # warn if the function turns up on a different qubit.
+                declared_q = gate_data.get(
+                    "output_qubit", meta.get(f"output_qubit_{method}"))
                 found_match = False
                 best_qubit = -1
                 best_tt = ""
-                for q in range(n_qubits):
-                    sim_tt = simulate_truth_table(circuit, num_pis, q)
+                if declared_q is not None and 0 <= declared_q < n_qubits:
+                    sim_tt = simulate_truth_table(circuit, num_pis, declared_q)
+                    best_tt = sim_tt
+                    best_qubit = declared_q
                     if sim_tt == ref_tt:
                         found_match = True
-                        best_qubit = q
-                        best_tt = sim_tt
-                        break
-                    if best_tt == "":
-                        best_tt = sim_tt
-                        best_qubit = q
+                if not found_match:
+                    for q in range(n_qubits):
+                        if q == declared_q:
+                            continue
+                        sim_tt = simulate_truth_table(circuit, num_pis, q)
+                        if sim_tt == ref_tt:
+                            found_match = True
+                            best_qubit = q
+                            best_tt = sim_tt
+                            print(f"  ^ WARNING: xag_{idx} {method}: declared "
+                                  f"output qubit {declared_q} does not hold the "
+                                  f"function; found it on q{q} instead")
+                            break
+                        if best_tt == "":
+                            best_tt = sim_tt
+                            best_qubit = q
 
                 # Step 2: Build reference oracle and run QCEC.
                 # Always build the reference oracle so the failure report

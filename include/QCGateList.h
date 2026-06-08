@@ -22,6 +22,9 @@ struct QCGateList {
   uint32_t num_qubits = 0;
   uint32_t num_pis = 0;
   uint32_t num_ancillas = 0;
+  /// Qubit that holds the primary-output value (set by the translator; with
+  /// multiple POs, the last one processed).
+  uint32_t output_qubit = 0;
   std::vector<GateOp> gates;
 
   /// Serialize to JSON for passing to the Python/Qiskit bridge.
@@ -29,6 +32,7 @@ struct QCGateList {
     std::string json = "{\"num_qubits\":" + std::to_string(num_qubits) +
                        ",\"num_pis\":" + std::to_string(num_pis) +
                        ",\"num_ancillas\":" + std::to_string(num_ancillas) +
+                       ",\"output_qubit\":" + std::to_string(output_qubit) +
                        ",\"gates\":[";
     for (size_t i = 0; i < gates.size(); ++i) {
       if (i > 0)
