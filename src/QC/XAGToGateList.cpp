@@ -25,7 +25,11 @@ QCGateList XAGToGateList::translate(const XagContext &ctx) {
   t.result_.num_pis = ctx.xag.num_pis();
 
   // Process each primary output (depth-first from output to inputs).
-  ctx.xag.foreach_po([&](auto signal) { t.processSignal(signal); });
+  // processSignal applies the trailing X for a complemented PO on the
+  // result wire; output_qubit records it (last PO wins; single-PO in
+  // practice).
+  ctx.xag.foreach_po(
+      [&](auto signal) { t.result_.output_qubit = t.processSignal(signal); });
 
   t.result_.num_qubits = t.next_qubit_;
   t.result_.num_ancillas = t.next_qubit_ - ctx.xag.num_pis();
@@ -33,18 +37,23 @@ QCGateList XAGToGateList::translate(const XagContext &ctx) {
   return t.result_;
 }
 
+// Top-level (PO) entry: complement becomes a trailing X on the RESULT wire.
+// Internal consumers use resolveSignal() + X-brackets instead — emitting X
+// on the producer's wire in place would corrupt shared signals/PIs for
+// later readers.
 uint32_t
 XAGToGateList::processSignal(mockturtle::xag_network::signal sig) {
-  auto node = xag_.get_node(sig);
-  bool complemented = xag_.is_complemented(sig);
-
-  uint32_t qubit = processNode(node);
-
+  auto [qubit, complemented] = resolveSignal(sig);
   if (complemented) {
     emitGate(GateType::X, {}, qubit);
   }
-
   return qubit;
+}
+
+// Resolve a signal WITHOUT emitting any complement gate.
+std::pair<uint32_t, bool>
+XAGToGateList::resolveSignal(mockturtle::xag_network::signal sig) {
+  return {processNode(xag_.get_node(sig)), xag_.is_complemented(sig)};
 }
 
 uint32_t XAGToGateList::processNode(mockturtle::xag_network::node node) {
@@ -92,10 +101,19 @@ XAGToGateList::processAndNode(mockturtle::xag_network::node node) {
   bool simple1 = isSimpleNode(child1);
 
   if (simple0 && simple1) {
-    // Case 1: Both inputs already on qubits — simple Toffoli.
-    uint32_t q_a = processSignal(fanins[0]);
-    uint32_t q_b = processSignal(fanins[1]);
+    // Case 1: Both inputs already on qubits — simple Toffoli. Complemented
+    // controls X-bracket the Toffoli (wires restored immediately).
+    auto [q_a, c_a] = resolveSignal(fanins[0]);
+    auto [q_b, c_b] = resolveSignal(fanins[1]);
+    if (c_a)
+      emitGate(GateType::X, {}, q_a);
+    if (c_b)
+      emitGate(GateType::X, {}, q_b);
     emitGate(GateType::Toffoli, {q_a, q_b}, a_out);
+    if (c_a)
+      emitGate(GateType::X, {}, q_a);
+    if (c_b)
+      emitGate(GateType::X, {}, q_b);
   } else {
     // Case 2: At least one input requires a sub-circuit (compute/uncompute).
     // Identify simple vs complex child. If both complex, process the first
@@ -104,12 +122,13 @@ XAGToGateList::processAndNode(mockturtle::xag_network::node node) {
     int complexIdx;
 
     uint32_t q_simple;
+    bool c_simple;
     if (simpleIdx >= 0) {
-      q_simple = processSignal(fanins[simpleIdx]);
+      std::tie(q_simple, c_simple) = resolveSignal(fanins[simpleIdx]);
       complexIdx = 1 - simpleIdx;
     } else {
       // Both complex: process child 0 normally (makes it "simple").
-      q_simple = processSignal(fanins[0]);
+      std::tie(q_simple, c_simple) = resolveSignal(fanins[0]);
       complexIdx = 1;
     }
 
@@ -120,10 +139,19 @@ XAGToGateList::processAndNode(mockturtle::xag_network::node node) {
     }
 
     size_t gatesBefore = result_.gates.size();
-    uint32_t a_k = processSignal(fanins[complexIdx]); // COMPUTE
+    auto [a_k, c_k] = resolveSignal(fanins[complexIdx]); // COMPUTE
     size_t gatesAfter = result_.gates.size();
 
-    emitGate(GateType::Toffoli, {q_simple, a_k}, a_out); // USE
+    // USE — complement brackets sit OUTSIDE the uncompute window.
+    if (c_simple)
+      emitGate(GateType::X, {}, q_simple);
+    if (c_k)
+      emitGate(GateType::X, {}, a_k);
+    emitGate(GateType::Toffoli, {q_simple, a_k}, a_out);
+    if (c_simple)
+      emitGate(GateType::X, {}, q_simple);
+    if (c_k)
+      emitGate(GateType::X, {}, a_k);
 
     emitUncompute(gatesBefore, gatesAfter); // UNCOMPUTE
 
@@ -153,13 +181,19 @@ XAGToGateList::processXorNode(mockturtle::xag_network::node node) {
   xag_.foreach_fanin(node, [&](auto sig) { fanins.push_back(sig); });
 
   // Process both children.
-  uint32_t q_a = processSignal(fanins[0]);
-  uint32_t q_b = processSignal(fanins[1]);
+  auto [q_a, c_a] = resolveSignal(fanins[0]);
+  auto [q_b, c_b] = resolveSignal(fanins[1]);
 
   // Allocate a fresh output qubit to preserve both children's qubits.
+  // A complemented fanin becomes an X on the FRESH target (¬v⊕w == v⊕w⊕1),
+  // never on the shared source wire.
   uint32_t q_out = next_qubit_++;
   emitGate(GateType::CNOT, {q_a}, q_out); // q_out ^= A
+  if (c_a)
+    emitGate(GateType::X, {}, q_out);
   emitGate(GateType::CNOT, {q_b}, q_out); // q_out ^= B  →  q_out = A XOR B
+  if (c_b)
+    emitGate(GateType::X, {}, q_out);
 
   node_to_qubit_[idx] = q_out;
   return q_out;

@@ -82,9 +82,9 @@ def compare_all(data_dir: str, q3satlib_path: str):
         return
 
     print(f"{'#':>3} | {'PIs':>3} | {'Method':>10} | {'T-cnt':>5} | "
-          f"{'CNOTs':>5} | {'Total':>5} || {'q3SAT T':>7} | "
+          f"{'T-dep':>5} | {'CNOTs':>5} | {'Total':>5} || {'q3SAT T':>7} | "
           f"{'q3SAT CX':>8} | {'q3SAT Tot':>9}")
-    print("-" * 85)
+    print("-" * 93)
 
     for meta_file in meta_files:
         idx = meta_file.stem.replace("xag_", "").replace("_meta", "")
@@ -119,16 +119,17 @@ def compare_all(data_dir: str, q3satlib_path: str):
         for method_key in ["current", "existing", "proposed"]:
             m = meta.get(f"metrics_{method_key}", {})
             t_cnt = m.get("t_count", "?")
+            t_dep = m.get("t_depth", "?")
             cnot_cnt = m.get("cnot_count", "?")
             total = m.get("total", "?")
 
             print(f"{idx:>3} | {num_pis:>3} | {method_key:>10} | "
-                  f"{t_cnt:>5} | {cnot_cnt:>5} | {total:>5} || "
+                  f"{t_cnt:>5} | {t_dep:>5} | {cnot_cnt:>5} | {total:>5} || "
                   f"{str(q3_metrics.get('t_count', '?')):>7} | "
                   f"{str(q3_metrics.get('cnot', '?')):>8} | "
                   f"{str(q3_metrics.get('total', '?')):>9}")
 
-    print("-" * 85)
+    print("-" * 93)
     print("NOTE: q3SATlib metrics are for phase oracles (different circuit style).")
     print("Direct comparison of absolute numbers may not be meaningful —")
     print("the relative improvement between Existing and Proposed is the key metric.")
