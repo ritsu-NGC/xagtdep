@@ -58,6 +58,10 @@ RUN pip3 install --no-cache-dir \
 WORKDIR /xagtdep
 COPY . .
 
+# Strip CR from shell scripts in case the build context was checked out on
+# Windows (CRLF) — bash in this Linux image cannot run CRLF scripts.
+RUN find . -name '*.sh' -not -path './build/*' -exec sed -i 's/\r$//' {} +
+
 # Configure + build (FetchContent clones caterpillar/mockturtle here).
 RUN cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
     && cmake --build build -j"$(nproc)"
