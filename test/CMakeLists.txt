@@ -80,6 +80,22 @@ set_target_properties(CIQCVerification PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+# XAG structural exporter — dumps generate_random_xag() output as JSON for the
+# Python dirty-pebbling solver (experiments/dirty-pebbling/). No LLVM needed;
+# compiles RandomXAG.cpp directly and links mockturtle only.
+add_executable(XAGExport
+    XAGExport.cpp
+    ${CMAKE_SOURCE_DIR}/src/QC/RandomXAG.cpp
+)
+target_include_directories(XAGExport PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/QC
+)
+target_link_libraries(XAGExport mockturtle)
+set_target_properties(XAGExport PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)
 configure_file(run_passes.sh ${CMAKE_BINARY_DIR}/run_passes.sh COPYONLY)
