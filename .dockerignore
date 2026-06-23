@@ -8,3 +8,8 @@ doc/
 .claude/
 .vscode/
 .idea/
+# Python venvs / caches (host binaries; the container installs its own).
+**/.venv/
+**/__pycache__/
+**/*.pyc
+experiments/**/xags/

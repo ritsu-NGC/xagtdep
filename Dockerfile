@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
         python3-dev \
+        python3-z3 \
         zlib1g-dev \
         libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -56,6 +57,10 @@ RUN pip3 install --no-cache-dir \
 
 WORKDIR /xagtdep
 COPY . .
+
+# Strip CR from shell scripts in case the build context was checked out on
+# Windows (CRLF) — bash in this Linux image cannot run CRLF scripts.
+RUN find . -name '*.sh' -not -path './build/*' -exec sed -i 's/\r$//' {} +
 
 # Configure + build (FetchContent clones caterpillar/mockturtle here).
 RUN cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \

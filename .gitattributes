@@ -1,0 +1,3 @@
+# Shell scripts must stay LF: they run inside the Linux container, so a Windows
+# checkout converting them to CRLF would break bash ($'\r': command not found).
+*.sh text eol=lf
