@@ -50,7 +50,7 @@ def min_ancilla(xag, method, T, W, K, timeout_ms):
             return last, "proved"
         else:
             return last, "timeout"
-    return last, "hit-W"
+    return last, "minimal"
 
 
 def main():
