@@ -46,7 +46,7 @@ def min_ancilla(xag: Xag, method: str, T_B: int, W: int, K: int, timeout_ms: int
             return last, ("proved" if last else "infeasible")
         else:  # unknown (timeout)
             return last, (f"timeout below {last}" if last else "timeout")
-    return last, "hit-W"
+    return last, "minimal"
 
 
 def main():
