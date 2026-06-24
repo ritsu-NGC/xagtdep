@@ -96,6 +96,18 @@ set_target_properties(XAGExport PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
+# ExampleProve — builds the slide-5 example XAG by hand and runs the REAL
+# translators on it to print the clean-side ancilla count (proves 7 for Proposed).
+add_executable(ExampleProve ExampleProve.cpp)
+target_link_libraries(ExampleProve QCObj NewMethodObj XAGObj ${llvm_libs})
+target_include_directories(ExampleProve PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/QC
+)
+set_target_properties(ExampleProve PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)
 configure_file(run_passes.sh ${CMAKE_BINARY_DIR}/run_passes.sh COPYONLY)
