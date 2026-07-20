@@ -42,6 +42,11 @@ jobs:
       - name: Strict equivalence verification
         run: python test/verify_circuits.py --strict build/verification_data_ci
 
+      # PebblingTest (ctest step) emits the hand-scheduled reuse case: same
+      # function as Bennett at fewer qubits, proven equivalent here.
+      - name: Strict equivalence — pebbling reuse demo
+        run: python test/verify_circuits.py --strict build/verification_data_pebbling_demo
+
       - name: Upload verification data
         if: always()
         uses: actions/upload-artifact@v4
@@ -49,4 +54,5 @@ jobs:
           name: ci-verification-results
           path: |
             build/verification_data_ci/
+            build/verification_data_pebbling_demo/
           retention-days: 30

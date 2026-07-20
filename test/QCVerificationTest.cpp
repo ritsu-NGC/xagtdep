@@ -6,6 +6,7 @@
 //   - Single-XAG mode (--seed/--pis/--ands/--xors): rerun one XAG for debug.
 
 #include "QCVerificationCommon.h"
+#include "SequenceJson.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <cstring>
@@ -22,8 +23,9 @@ struct CliArgs {
   bool have_seed = false, have_pis = false, have_ands = false, have_xors = false;
   uint64_t seed = 0;
   uint32_t pis = 0, ands = 0, xors = 0;
-  std::string method = "all"; // current | existing | proposed | all
+  std::string method = "all"; // current | existing | proposed | pebbling | all
   std::string data_dir = "";
+  std::string sequence_file = ""; // pebbling schedule JSON (single-XAG mode)
   bool verify = false;
   bool help = false;
 };
@@ -38,10 +40,15 @@ static void printUsage() {
             "  --pis <N>       number of primary inputs\n"
             "  --ands <N>      number of AND gates\n"
             "  --xors <N>      number of XOR gates\n"
-            "  --method <M>    current|existing|proposed|all (default: all)\n"
+            "  --method <M>    current|existing|proposed|pebbling|all\n"
+            "                  (default: all)\n"
             "  --data-dir <P>  output directory (default: verification_data\n"
             "                  in sweep mode, verification_data_single in\n"
             "                  single-XAG mode)\n"
+            "  --sequence <F>  pebbling-schedule JSON consumed by the\n"
+            "                  pebbling method (single-XAG mode only; node\n"
+            "                  indices must match the generated XAG — see\n"
+            "                  xag_<idx>_structure.json)\n"
             "  --verify        run python test/verify_circuits.py after\n"
             "  -h, --help      print this help\n\n"
             "Example:\n"
@@ -90,6 +97,10 @@ static bool parseArgs(int argc, char **argv, CliArgs &out) {
       auto v = need("--data-dir");
       if (!v) return false;
       out.data_dir = v;
+    } else if (a == "--sequence") {
+      auto v = need("--sequence");
+      if (!v) return false;
+      out.sequence_file = v;
     } else if (a == "--verify") {
       out.verify = true;
     } else {
@@ -106,9 +117,15 @@ static bool parseArgs(int argc, char **argv, CliArgs &out) {
     return false;
   }
   if (out.method != "all" && out.method != "current" &&
-      out.method != "existing" && out.method != "proposed") {
+      out.method != "existing" && out.method != "proposed" &&
+      out.method != "pebbling") {
     errs() << "Invalid --method: " << out.method
-           << " (expected: current|existing|proposed|all)\n";
+           << " (expected: current|existing|proposed|pebbling|all)\n";
+    return false;
+  }
+  if (!out.sequence_file.empty() && !out.single_mode) {
+    errs() << "--sequence requires single-XAG mode (--seed/--pis/--ands/"
+              "--xors)\n";
     return false;
   }
   return true;
@@ -144,8 +161,18 @@ int main(int argc, char **argv) {
   int passed = 0, failed = 0, idx = 0;
 
   if (args.single_mode) {
+    xagtdep::PebblingSequence seq;
+    if (!args.sequence_file.empty()) {
+      try {
+        seq = xagtdep::readSequenceFile(args.sequence_file);
+      } catch (const std::exception &e) {
+        errs() << "Failed to load --sequence file: " << e.what() << "\n";
+        return 2;
+      }
+    }
     bool ok = xagtdep::test::runOneXag(args.pis, args.ands, args.xors, args.seed,
-                        /*idx=*/0, dataDir, args.method);
+                        /*idx=*/0, dataDir, args.method,
+                        seq.empty() ? nullptr : &seq);
     (ok ? passed : failed)++;
     idx = 1;
 

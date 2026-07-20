@@ -8,6 +8,9 @@ set(QC_SOURCES
     XAGToGateList.cpp
     ExistingMethod.cpp
     ProposedMethod.cpp
+    PebblingMethod.cpp
+    BennettSequence.cpp
+    SequenceJson.cpp
     RandomXAG.cpp
 )
 

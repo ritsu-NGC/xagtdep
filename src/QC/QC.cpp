@@ -2,6 +2,7 @@
 #include "QC.h"
 #include "NewMethod.h"
 #include "ExistingMethod.h"
+#include "PebblingMethod.h"
 #include "ProposedMethod.h"
 #include "QCGateList.h"
 #include "XAGToGateList.h"
@@ -45,6 +46,18 @@ void QC::evaluate(const XagContext &ctx, SynthesisAlgorithm algo) {
   case SynthesisAlgorithm::ProposedMethod:
     errs() << "[QC] Using Proposed Method (Algorithm 2).\n";
     gateList = ProposedMethod::translate(ctx);
+    break;
+  case SynthesisAlgorithm::PebblingMethod:
+    errs() << "[QC] Using Pebbling Method (sequence-driven"
+           << (ctx.pebbling.empty() ? ", Bennett fallback" : "") << ").\n";
+    // An invalid sequence throws PebblingError; QCLib is loaded into opt, so
+    // no exception may cross the plugin boundary — report and bail instead.
+    try {
+      gateList = PebblingMethod::translate(ctx);
+    } catch (const std::exception &e) {
+      errs() << "[QC] ERROR: PebblingMethod failed: " << e.what() << "\n";
+      return;
+    }
     break;
   }
   std::string json = gateList.toJSON();

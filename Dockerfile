@@ -68,6 +68,7 @@ RUN printf '%s\n' \
       'cd build && ctest -E QCVerificationTest --output-on-failure' \
       './CIQCVerification --data-dir verification_data_ci' \
       'cd .. && python3 test/verify_circuits.py --strict build/verification_data_ci' \
+      'python3 test/verify_circuits.py --strict build/verification_data_pebbling_demo' \
       > /xagtdep/ci_check.sh \
     && chmod +x /xagtdep/ci_check.sh
 

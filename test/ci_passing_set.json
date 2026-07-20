@@ -1,5 +1,5 @@
 {
-  "description": "XAGs that pass strict QCEC equivalence on current+existing+proposed across the full 14-config x 3-seed sweep. Regenerate with test/_regen_passing_set.py. Used by CIQCVerification as a regression gate.",
+  "description": "XAGs that pass strict QCEC equivalence on current+existing+proposed+pebbling across the full 14-config x 3-seed sweep. Regenerate with test/_regen_passing_set.py. Used by CIQCVerification as a regression gate.",
   "tuples": [
     {"pis": 3, "ands": 1, "xors": 1, "seed": 42},
     {"pis": 3, "ands": 2, "xors": 2, "seed": 12345},
