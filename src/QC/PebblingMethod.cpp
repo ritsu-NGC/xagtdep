@@ -265,20 +265,55 @@ void PebblingMethod::finalize() {
     fail(PebblingError::kNoStep, "end",
          "PO node(s) " + missing + " are not live at the end of the sequence");
 
-  // PO resolution: trailing X for a complemented PO (in place, matching the
-  // existing translators' processSignal); output_qubit = last PO processed.
-  xag_.foreach_po([&](auto sig) {
+  // PO resolution: a complemented PO gets a trailing X, but never by
+  // flipping a wire another PO also reads. Flip in place only when EVERY PO
+  // on the wire wants the complement (one X serves them all); on a mixed
+  // group, leave the wire untouched and copy the complemented value onto a
+  // fresh wire (CNOT + X, one copy wire per group). A single complemented PO
+  // — the whole test corpus — keeps the existing single in-place X.
+  // output_qubit = last PO processed (existing scalar contract).
+  struct PoWireInfo {
+    uint32_t pos = 0, complemented = 0;
+    bool x_emitted = false;
+    int64_t copy_wire = -1;
+  };
+  auto resolvePoWire = [&](mockturtle::xag_network::signal sig) -> uint32_t {
     auto node = xag_.get_node(sig);
-    uint32_t wire;
     if (xag_.is_constant(node))
-      wire = constWire();
-    else if (xag_.is_pi(node))
-      wire = pi_wire_.at(xag_.node_to_index(node));
-    else
-      wire = node_loc_.at(xag_.node_to_index(node));
+      return constWire();
+    if (xag_.is_pi(node))
+      return pi_wire_.at(xag_.node_to_index(node));
+    return node_loc_.at(xag_.node_to_index(node));
+  };
+  std::unordered_map<uint32_t, PoWireInfo> po_wires;
+  xag_.foreach_po([&](auto sig) {
+    auto &info = po_wires[resolvePoWire(sig)];
+    info.pos++;
     if (xag_.is_complemented(sig))
-      emitGate(GateType::X, {}, wire);
-    result_.output_qubit = wire;
+      info.complemented++;
+  });
+  xag_.foreach_po([&](auto sig) {
+    uint32_t wire = resolvePoWire(sig);
+    if (!xag_.is_complemented(sig)) {
+      result_.output_qubit = wire;
+      return;
+    }
+    auto &info = po_wires[wire];
+    if (info.complemented == info.pos) {
+      if (!info.x_emitted) {
+        emitGate(GateType::X, {}, wire);
+        info.x_emitted = true;
+      }
+      result_.output_qubit = wire;
+    } else {
+      if (info.copy_wire < 0) {
+        info.copy_wire = next_extra_++;
+        emitGate(GateType::CNOT, {wire},
+                 static_cast<uint32_t>(info.copy_wire));
+        emitGate(GateType::X, {}, static_cast<uint32_t>(info.copy_wire));
+      }
+      result_.output_qubit = static_cast<uint32_t>(info.copy_wire);
+    }
   });
 }
 

@@ -169,10 +169,18 @@ int main(int argc, char **argv) {
         errs() << "Failed to load --sequence file: " << e.what() << "\n";
         return 2;
       }
+      // An explicit schedule must never be silently replaced by the Bennett
+      // fallback (empty ctx.pebbling means "no schedule supplied"), so an
+      // empty steps array is an error, not a fallback.
+      if (seq.empty()) {
+        errs() << "--sequence file has an empty \"steps\" array; a schedule "
+                  "for a gated XAG is never empty\n";
+        return 2;
+      }
     }
     bool ok = xagtdep::test::runOneXag(args.pis, args.ands, args.xors, args.seed,
                         /*idx=*/0, dataDir, args.method,
-                        seq.empty() ? nullptr : &seq);
+                        args.sequence_file.empty() ? nullptr : &seq);
     (ok ? passed : failed)++;
     idx = 1;
 

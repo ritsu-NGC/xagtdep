@@ -2,12 +2,12 @@
 // interface between David's SAT-based pebbling solver and PebblingMethod.
 //
 // Schema:
-//   { "num_ancillas": 4,
+//   { "num_ancillas": 1,
 //     "steps": [ {"action":"pebble",  "node":12, "anc":0},
 //                {"action":"unpebble","node":12, "anc":0} ] }
 //
-// "num_ancillas" is optional on read and cross-checked against the value
-// derived from the steps (sequenceNumAncillas) — a mismatch is an error.
+// "num_ancillas" is optional on read and must equal exactly max(anc)+1 over
+// the steps (sequenceNumAncillas) — a mismatch is an error.
 // Node indices are mockturtle node indices of the SAME xag_network the
 // translator will consume (ctx.xag). Because random-XAG generation is not
 // deterministic across platforms/stdlibs, pair sequence files with the XAG

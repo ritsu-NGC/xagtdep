@@ -286,6 +286,64 @@ static bool testPoIsPi() {
   return pass;
 }
 
+/// Two POs sharing one wire with mixed complementation: the wire must NOT be
+/// flipped in place (that would corrupt the uncomplemented PO); the
+/// complemented one is copied out. Uniformly-complemented POs share one X.
+static bool testSharedPoComplement() {
+  bool pass = true;
+
+  // Mixed: po(a) and po(!a) — expect CNOT(0->1); X(1); wire 0 untouched.
+  {
+    mockturtle::xag_network xag;
+    auto a = xag.create_pi();
+    xag.create_po(a);
+    xag.create_po(xag.create_not(a));
+    auto ctx = mkCtx(xag);
+    QCGateList gl = PebblingMethod::translate(ctx);
+    pass &= gl.num_qubits == 2 && gl.gates.size() == 2 &&
+            gl.gates[0].type == GateType::CNOT && gl.gates[0].target == 1 &&
+            gl.gates[1].type == GateType::X && gl.gates[1].target == 1 &&
+            gl.output_qubit == 1;
+  }
+
+  // Uniform: po(!a) twice — one shared in-place X, both POs on wire 0.
+  {
+    mockturtle::xag_network xag;
+    auto a = xag.create_pi();
+    xag.create_po(xag.create_not(a));
+    xag.create_po(xag.create_not(a));
+    auto ctx = mkCtx(xag);
+    QCGateList gl = PebblingMethod::translate(ctx);
+    pass &= gl.num_qubits == 1 && gl.gates.size() == 1 &&
+            gl.gates[0].type == GateType::X && gl.gates[0].target == 0 &&
+            gl.output_qubit == 0;
+  }
+
+  errs() << "[PebblingTest::SharedPoComplement] " << (pass ? "PASSED" : "FAILED")
+         << "\n";
+  return pass;
+}
+
+/// A failed synthesis must be visible to callers: QC::evaluate stores a
+/// machine-readable {"error": ...} sentinel instead of stale/empty output.
+static bool testEvaluateErrorSentinel() {
+  auto sc = buildSimpleCase();
+  auto ctx = mkCtx(sc.xag);
+
+  QC synthesizer;
+  synthesizer.evaluate(ctx, SynthesisAlgorithm::PebblingMethod); // succeeds
+  bool pass = synthesizer.getQASM().find("\"error\"") == std::string::npos;
+
+  ctx.pebbling = {P(999, 0)}; // structurally invalid schedule
+  synthesizer.evaluate(ctx, SynthesisAlgorithm::PebblingMethod);
+  pass &= synthesizer.getQASM().rfind("{\"error\":\"", 0) == 0 &&
+          synthesizer.getQASM().find("structure") != std::string::npos;
+
+  errs() << "[PebblingTest::EvaluateErrorSentinel] "
+         << (pass ? "PASSED" : "FAILED") << "\n";
+  return pass;
+}
+
 /// End-to-end through QC::evaluate with the new enum value (Bennett path).
 static bool testEvaluatePipeline() {
   auto sc = buildSimpleCase();
@@ -331,6 +389,8 @@ int main() {
   pass &= testReuseFewerQubits();
   pass &= testSequenceJson();
   pass &= testPoIsPi();
+  pass &= testSharedPoComplement();
+  pass &= testEvaluateErrorSentinel();
   pass &= testEvaluatePipeline();
   pass &= testEmitReuseDemo();
 

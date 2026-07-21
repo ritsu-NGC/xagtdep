@@ -9,7 +9,7 @@ PebblingMethod` (`src/QC/PebblingMethod.{h,cpp}`), consuming a
 ## The sequence file
 
 ```json
-{ "num_ancillas": 3,
+{ "num_ancillas": 2,
   "steps": [ {"action":"pebble",   "node": 4, "anc": 0},
              {"action":"pebble",   "node": 5, "anc": 1},
              {"action":"unpebble", "node": 4, "anc": 0} ] }
@@ -19,9 +19,14 @@ PebblingMethod` (`src/QC/PebblingMethod.{h,cpp}`), consuming a
 - `node` is the **mockturtle node index** of a gate node (AND or XOR) in the
   XAG being synthesized (`ctx.xag`). Constants (index 0) and PIs (indices
   1..num_pis) are never pebbled.
-- `anc` is an ancilla **slot**; slot `a` lives on qubit `num_pis + a`.
-- `num_ancillas` is optional and must equal `max(anc)+1` when present (it is
-  re-derived and cross-checked on read).
+- `anc` is an ancilla **slot**; slot `a` lives on qubit `num_pis + a`. Slot
+  ids are qubit offsets, so number them **densely** `0..W-1` — sparse ids
+  waste physical wires. The validator enforces the sanity cap
+  `anc < number of steps`, which any dense schedule satisfies automatically
+  (each used slot is pebbled at least once).
+- `num_ancillas` is optional and must equal exactly `max(anc)+1` when
+  present (it is re-derived and cross-checked on read; a mismatch is
+  rejected). The example above uses slots 0 and 1, hence `2`.
 
 Every case run by the verification harness also writes
 `xag_<idx>_structure.json` — the exact graph (`num_pis`, `pos`, `gates` with
@@ -100,7 +105,9 @@ python3 test/verify_circuits.py --strict verification_data_single
 The harness writes `xag_0_pebbling.json` (gate list), `xag_0_structure.json`
 (graph), and `xag_0_meta.json` (truth table + per-method metrics); the
 Python step checks statevector truth tables and QCEC equivalence against a
-truth-table oracle. Omitting `--sequence` uses the Bennett fallback.
+truth-table oracle. Omitting `--sequence` uses the Bennett fallback; a
+`--sequence` file with an empty `steps` array is rejected (an explicit
+schedule is never silently replaced by the fallback).
 
 In C++ (tests, tools): `readSequenceFile(path)` →
 `PebblingMethod::translate(ctx, seq)`, or set `ctx.pebbling` and use
