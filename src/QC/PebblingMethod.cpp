@@ -14,18 +14,10 @@
 //         held at pebble time (wire-pinned exact adjoint, D5)
 //   End: every gate-node PO is live; no non-PO gate node is live.
 //
-// V7 subsumes the professor's rule (b) ("never pebble onto a wire a live
-// pebble depends on"): rule (b) as a state invariant would reject correct
-// reuse schedules (rebuild onto the pinned wire, squat-and-restore, reuse of
-// wires read only by never-unpebbled PO pebbles), while V7 rejects exactly
-// the schedules whose unpebbles would misfire. last_writer_step_ recovers
-// rule-(b)-quality error locality in the V7 message.
-//
-// Helper-wire invariant (not checkable by V7 since the helper holds no
-// node): only PO-AND gadgets touch the helper, each restores it within its
-// own recorded window, and gadget emission is strictly sequential — so the
-// helper is |0> at every step boundary. Recorded windows are never trimmed;
-// the adjoint must replay both helper CNOTs and any complement brackets.
+// Helper-wire invariant (not V7-checkable — the helper holds no node): every
+// PO-AND gadget restores the helper within its recorded window, so it is |0>
+// at each step boundary. Windows are never trimmed: the adjoint must replay
+// the helper CNOTs and any complement brackets.
 
 #include "PebblingMethod.h"
 #include "BennettSequence.h"
@@ -78,8 +70,7 @@ void PebblingMethod::run(const PebblingSequence &seq) {
   result_.num_ancillas = next_extra_ - num_pis_;
 }
 
-// Whole-sequence structural pass — untrusted input becomes a PebblingError
-// BEFORE any gate is emitted (the V-rules then run per step).
+// Structural pass: malformed input fails before any gate is emitted.
 void PebblingMethod::validateStructure(const PebblingSequence &seq) const {
   for (size_t k = 0; k < seq.size(); ++k) {
     const auto &s = seq[k];
@@ -92,8 +83,8 @@ void PebblingMethod::validateStructure(const PebblingSequence &seq) const {
       fail(k, "structure",
            "node " + std::to_string(s.node) +
                " is not a gate node (constants/PIs are never pebbled)");
-    // Any valid schedule introduces at most one new slot per step; this caps
-    // absurd ancilla ids from malformed input before they size the circuit.
+    // A valid schedule adds at most one slot per step; caps absurd ancilla
+    // ids before they size the circuit.
     if (s.anc >= seq.size())
       fail(k, "structure",
            "ancilla id " + std::to_string(s.anc) +
@@ -154,9 +145,8 @@ void PebblingMethod::doPebble(const PebbleStep &step, size_t step_idx) {
   Fanin f0 = resolveFanin(fanins[0], step_idx);
   Fanin f1 = resolveFanin(fanins[1], step_idx);
 
-  // V3 (professor's rule a): cannot compute onto a wire being read.
-  // Auto-true given V1+V2 (fanins live elsewhere, target free) — kept as a
-  // real check because it becomes load-bearing under dirty borrowing.
+  // V3: target must not be a fanin wire (auto-true given V1+V2, checked
+  // anyway).
   if (q == f0.wire || q == f1.wire)
     fail(step_idx, "V3",
          describeWire(q) + " is one of the fanin wires of node " +
@@ -209,9 +199,8 @@ void PebblingMethod::doUnpebble(const PebbleStep &step, size_t step_idx) {
              std::to_string(rec.anc) + ", not ancilla " +
              std::to_string(step.anc));
 
-  // V7 (subsumes professor's rule b): the exact adjoint is only the inverse
-  // if every wire the gadget read still holds the value it read — i.e. the
-  // same node (rebuilt there if it was freed in between).
+  // V7: each wire the gadget read must still hold the node it held at
+  // pebble time, or the exact adjoint is not the inverse.
   for (const auto &[w, m] : rec.read_pairs) {
     auto hold_it = qubit_holds_.find(w);
     if (hold_it == qubit_holds_.end() || hold_it->second != m) {
@@ -265,13 +254,10 @@ void PebblingMethod::finalize() {
     fail(PebblingError::kNoStep, "end",
          "PO node(s) " + missing + " are not live at the end of the sequence");
 
-  // PO resolution: a complemented PO gets a trailing X, but never by
-  // flipping a wire another PO also reads. Flip in place only when EVERY PO
-  // on the wire wants the complement (one X serves them all); on a mixed
-  // group, leave the wire untouched and copy the complemented value onto a
-  // fresh wire (CNOT + X, one copy wire per group). A single complemented PO
-  // — the whole test corpus — keeps the existing single in-place X.
-  // output_qubit = last PO processed (existing scalar contract).
+  // A complemented PO gets a trailing X, but never by flipping a wire
+  // another PO reads uncomplemented: uniform groups share one in-place X;
+  // mixed groups copy the complement onto a fresh wire (CNOT + X, one copy
+  // wire per group). output_qubit = last PO processed.
   struct PoWireInfo {
     uint32_t pos = 0, complemented = 0;
     bool x_emitted = false;
@@ -319,9 +305,8 @@ void PebblingMethod::finalize() {
 
 // ── Gadgets ───────────────────────────────────────────────────────────────
 
-// Fig 5: XOR onto the |0> target. A complemented fanin is an X on the fresh
-// target (XOR(¬a,b) = ¬(a⊕b)) — the existing translators' convention; never
-// flip the source wire in place.
+// Fig 5: XOR onto the |0> target. A complemented fanin becomes an X on the
+// fresh target, never on the source wire.
 void PebblingMethod::emitXorPebble(uint32_t t, const Fanin &f0,
                                    const Fanin &f1) {
   emitGate(GateType::CNOT, {f0.wire}, t);
@@ -332,10 +317,8 @@ void PebblingMethod::emitXorPebble(uint32_t t, const Fanin &f0,
     emitGate(GateType::X, {}, t);
 }
 
-// Fig 8: relative-phase AND onto the |0> target (4 T, no helper — the target
-// IS the H-conjugated wire). Complemented fanins bracket the whole gadget;
-// the brackets close inside the recorded window, so sources are restored and
-// the adjoint replays them correctly.
+// Fig 8: relative-phase AND onto the |0> target (4 T, no helper). Complement
+// brackets close inside the recorded window so the adjoint replays them.
 void PebblingMethod::emitAndIntermediate(uint32_t t, const Fanin &f0,
                                          const Fanin &f1) {
   if (f0.complemented)
@@ -354,11 +337,9 @@ void PebblingMethod::emitAndIntermediate(uint32_t t, const Fanin &f0,
     emitGate(GateType::X, {}, f1.wire);
 }
 
-// Fig 2's iωZ core: AND at a primary output (6 T). Children are prior pebble
-// steps, NOT inlined — the core acts on two live wires and the shared helper
-// (dirty-borrowed: the CC-iωZ/CC-iωZ† pair and the CNOT pair cancel on it
-// regardless of its state, so it is restored by construction). Roles are
-// fixed: fanin[0] is the ladder control, fanin[1] the CNOT source.
+// Fig 2's iωZ core: AND at a primary output (6 T). Acts on two live wires
+// and the shared helper (dirty-borrowed, restored by construction).
+// fanin[0] is the ladder control, fanin[1] the CNOT source.
 void PebblingMethod::emitAndOutputCore(uint32_t t, const Fanin &f0,
                                        const Fanin &f1) {
   uint32_t h = helperWire();
@@ -372,7 +353,7 @@ void PebblingMethod::emitAndOutputCore(uint32_t t, const Fanin &f0,
   emitCCiwZ(f0.wire, t, h);
   emitGate(GateType::CNOT, {f1.wire}, h);
   emitCCiwZdg(f0.wire, t, h);
-  emitGate(GateType::H, {}, t); // t now holds the AND result
+  emitGate(GateType::H, {}, t);
   emitGate(GateType::CNOT, {f1.wire}, h); // restores the helper
 
   if (f0.complemented)

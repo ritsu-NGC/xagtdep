@@ -84,12 +84,11 @@ static ReuseCase buildReuseCase() {
       P(rc.n1, 0), // compute n1
       P(rc.n2, 1), // n2 reads n1@anc0 (pins it for U(n2))
       U(rc.n1, 0), // free the slot early...
-      P(rc.n3, 0), // ...and reuse it for n3 (squat) — literal rule (b)
-                   // would forbid this; V7 semantics allow it
+      P(rc.n3, 0), // ...and reuse it for n3 (squat)
       P(rc.n4, 2), // PO
-      U(rc.n3, 0), // n3's read wire anc1 still holds n2 — V7 ok
-      P(rc.n1, 0), // REBUILD n1 on its pinned wire (D1)
-      U(rc.n2, 1), // V7: anc0 holds n1 again — exact adjoint valid
+      U(rc.n3, 0),
+      P(rc.n1, 0), // rebuild n1 on its pinned wire
+      U(rc.n2, 1),
       U(rc.n1, 0),
   };
   return rc;
@@ -167,9 +166,8 @@ static bool testValidatorNegatives() {
   return pass;
 }
 
-/// The reuse schedule (squat-and-restore + rebuild) must be ACCEPTED — this
-/// is the schedule shape literal rule (b) would reject — and the same
-/// schedule without the rebuild must fail V7 at U(n2).
+/// The reuse schedule (squat-and-restore + rebuild) must be accepted; the
+/// same schedule without the rebuild must fail V7 at U(n2).
 static bool testRebuildAndSquat() {
   auto rc = buildReuseCase();
   auto ctx = mkCtx(rc.xag);
