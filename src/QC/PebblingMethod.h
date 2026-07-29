@@ -8,7 +8,9 @@
 // values needed again are re-pebbled (rebuilt), never aliased — qubit slots
 // are reused, contents are recomputed.
 //
-// Gadgets (bodies match ProposedMethod's post-conformance-fix figures):
+// Gadgets are emitted via the shared gadgets:: provider (ToffoliGadgets); the
+// primary-output core's family is chosen by family_ (RelativePhase/ω by
+// default == Proposed; Exact == the phase-exact Existing core). Figures:
 //   XOR                → Fig 5   (two CNOTs onto the |0> ancilla)
 //   AND (intermediate) → Fig 8   (H; T†; CC-iωZ ladder; H — 4 T, no helper)
 //   AND (primary out)  → Fig 2's iωZ core (6 T, one shared dirty-borrowed
@@ -32,6 +34,7 @@
 
 #include "PebblingSequence.h"
 #include "QCGateList.h"
+#include "ToffoliGadgets.h"
 #include "XagContext.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -42,13 +45,18 @@ namespace xagtdep {
 class PebblingMethod {
 public:
   /// Translate using ctx.pebbling, or the Bennett schedule when it is empty.
-  static QCGateList translate(const XagContext &ctx);
-  /// Translate using an explicit sequence (tests / SAT-solver output).
+  /// `family` selects the primary-output AND core's gadget family: the default
+  /// RelativePhase (ω) reproduces Proposed; Exact gives the phase-exact
+  /// Existing core (same qubits, +2 T per PO-AND).
   static QCGateList translate(const XagContext &ctx,
-                              const PebblingSequence &seq);
+                              GadgetFamily family = GadgetFamily::RelativePhase);
+  /// Translate using an explicit sequence (tests / SAT-solver output).
+  static QCGateList translate(const XagContext &ctx, const PebblingSequence &seq,
+                              GadgetFamily family = GadgetFamily::RelativePhase);
 
 private:
-  explicit PebblingMethod(const mockturtle::xag_network &xag);
+  explicit PebblingMethod(const mockturtle::xag_network &xag,
+                          GadgetFamily family = GadgetFamily::RelativePhase);
 
   void run(const PebblingSequence &seq);
   void validateStructure(const PebblingSequence &seq) const;
@@ -77,12 +85,8 @@ private:
   uint32_t helperWire(); // shared PO-gadget helper; restored by every gadget
   uint32_t constWire();  // |0> wire backing constant fanins/POs
 
-  // ── Decomposition helpers (copied verbatim from ProposedMethod) ────────
-  void emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2);   // Fig 9  (3 T)
-  void emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2); // Fig 10 (3 T)
-  void appendAdjoint(size_t startIdx, size_t endIdx);
-  void emitGate(GateType type, std::vector<uint32_t> controls,
-                uint32_t target);
+  // Gadget bodies live in ToffoliGadgets (gadgets::); this class owns only
+  // the schedule, wire allocation, and the recorded-window bookkeeping.
 
   bool isOutputNode(NodeIndex idx) const { return po_nodes_.count(idx) > 0; }
   std::string describeWire(uint32_t wire) const;
@@ -91,6 +95,7 @@ private:
 
   // ── State ───────────────────────────────────────────────────────────────
   const mockturtle::xag_network &xag_;
+  GadgetFamily family_; // gadget family for primary-output AND cores
   std::unordered_set<NodeIndex> po_nodes_;
   std::unordered_map<NodeIndex, uint32_t> pi_wire_;
   uint32_t num_pis_ = 0;

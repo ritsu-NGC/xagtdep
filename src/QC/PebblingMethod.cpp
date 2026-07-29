@@ -26,8 +26,9 @@
 
 using namespace xagtdep;
 
-PebblingMethod::PebblingMethod(const mockturtle::xag_network &xag)
-    : xag_(xag) {
+PebblingMethod::PebblingMethod(const mockturtle::xag_network &xag,
+                               GadgetFamily family)
+    : xag_(xag), family_(family) {
   num_pis_ = xag_.num_pis();
   uint32_t next = 0;
   xag_.foreach_pi(
@@ -37,15 +38,17 @@ PebblingMethod::PebblingMethod(const mockturtle::xag_network &xag)
   });
 }
 
-QCGateList PebblingMethod::translate(const XagContext &ctx) {
+QCGateList PebblingMethod::translate(const XagContext &ctx,
+                                     GadgetFamily family) {
   if (!ctx.pebbling.empty())
-    return translate(ctx, ctx.pebbling);
-  return translate(ctx, BennettSequence::build(ctx.xag));
+    return translate(ctx, ctx.pebbling, family);
+  return translate(ctx, BennettSequence::build(ctx.xag), family);
 }
 
 QCGateList PebblingMethod::translate(const XagContext &ctx,
-                                     const PebblingSequence &seq) {
-  PebblingMethod t(ctx.xag);
+                                     const PebblingSequence &seq,
+                                     GadgetFamily family) {
+  PebblingMethod t(ctx.xag, family);
   t.run(seq);
   return t.result_;
 }
@@ -221,7 +224,7 @@ void PebblingMethod::doUnpebble(const PebbleStep &step, size_t step_idx) {
   }
 
   uint32_t q = num_pis_ + rec.anc;
-  appendAdjoint(rec.gate_begin, rec.gate_end);
+  gadgets::appendAdjoint(result_, rec.gate_begin, rec.gate_end);
 
   node_loc_.erase(idx);
   qubit_holds_.erase(q);
@@ -287,16 +290,17 @@ void PebblingMethod::finalize() {
     auto &info = po_wires[wire];
     if (info.complemented == info.pos) {
       if (!info.x_emitted) {
-        emitGate(GateType::X, {}, wire);
+        gadgets::emitGate(result_, GateType::X, {}, wire);
         info.x_emitted = true;
       }
       result_.output_qubit = wire;
     } else {
       if (info.copy_wire < 0) {
         info.copy_wire = next_extra_++;
-        emitGate(GateType::CNOT, {wire},
-                 static_cast<uint32_t>(info.copy_wire));
-        emitGate(GateType::X, {}, static_cast<uint32_t>(info.copy_wire));
+        gadgets::emitGate(result_, GateType::CNOT, {wire},
+                          static_cast<uint32_t>(info.copy_wire));
+        gadgets::emitGate(result_, GateType::X, {},
+                          static_cast<uint32_t>(info.copy_wire));
       }
       result_.output_qubit = static_cast<uint32_t>(info.copy_wire);
     }
@@ -309,32 +313,16 @@ void PebblingMethod::finalize() {
 // fresh target, never on the source wire.
 void PebblingMethod::emitXorPebble(uint32_t t, const Fanin &f0,
                                    const Fanin &f1) {
-  emitGate(GateType::CNOT, {f0.wire}, t);
-  if (f0.complemented)
-    emitGate(GateType::X, {}, t);
-  emitGate(GateType::CNOT, {f1.wire}, t);
-  if (f1.complemented)
-    emitGate(GateType::X, {}, t);
+  gadgets::emitXorLive(result_, f0.wire, f1.wire, t, f0.complemented,
+                       f1.complemented);
 }
 
 // Fig 8: relative-phase AND onto the |0> target (4 T, no helper). Complement
 // brackets close inside the recorded window so the adjoint replays them.
 void PebblingMethod::emitAndIntermediate(uint32_t t, const Fanin &f0,
                                          const Fanin &f1) {
-  if (f0.complemented)
-    emitGate(GateType::X, {}, f0.wire);
-  if (f1.complemented)
-    emitGate(GateType::X, {}, f1.wire);
-
-  emitGate(GateType::H, {}, t);
-  emitGate(GateType::Tdg, {}, t);
-  emitCCiwZ(f0.wire, f1.wire, t);
-  emitGate(GateType::H, {}, t);
-
-  if (f0.complemented)
-    emitGate(GateType::X, {}, f0.wire);
-  if (f1.complemented)
-    emitGate(GateType::X, {}, f1.wire);
+  gadgets::emitAndIntermediateLive(result_, f0.wire, f1.wire, t,
+                                   f0.complemented, f1.complemented);
 }
 
 // Fig 2's iωZ core: AND at a primary output (6 T). Acts on two live wires
@@ -342,24 +330,11 @@ void PebblingMethod::emitAndIntermediate(uint32_t t, const Fanin &f0,
 // fanin[0] is the ladder control, fanin[1] the CNOT source.
 void PebblingMethod::emitAndOutputCore(uint32_t t, const Fanin &f0,
                                        const Fanin &f1) {
+  // Allocate the shared helper here (same point as before) so wire numbering
+  // is unchanged; the gadget body only appends gates.
   uint32_t h = helperWire();
-
-  if (f0.complemented)
-    emitGate(GateType::X, {}, f0.wire);
-  if (f1.complemented)
-    emitGate(GateType::X, {}, f1.wire);
-
-  emitGate(GateType::H, {}, t);
-  emitCCiwZ(f0.wire, t, h);
-  emitGate(GateType::CNOT, {f1.wire}, h);
-  emitCCiwZdg(f0.wire, t, h);
-  emitGate(GateType::H, {}, t);
-  emitGate(GateType::CNOT, {f1.wire}, h); // restores the helper
-
-  if (f0.complemented)
-    emitGate(GateType::X, {}, f0.wire);
-  if (f1.complemented)
-    emitGate(GateType::X, {}, f1.wire);
+  gadgets::emitAndOutputLive(result_, family_, f0.wire, f1.wire, t, h,
+                             f0.complemented, f1.complemented);
 }
 
 // ── Lazy extra wires ──────────────────────────────────────────────────────
@@ -376,57 +351,8 @@ uint32_t PebblingMethod::constWire() {
   return static_cast<uint32_t>(const_wire_);
 }
 
-// ── Decomposition helpers (bodies copied verbatim from ProposedMethod) ────
-
-// Fig 9: relative-phase CC-iωZ decomposition (3 T, 6 CNOT).
-void PebblingMethod::emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::T, {}, q0);
-  emitGate(GateType::Tdg, {}, q1);
-  emitGate(GateType::T, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-}
-
-// Fig 10: CC-iωZ† — same network with T ↔ T†.
-void PebblingMethod::emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::Tdg, {}, q0);
-  emitGate(GateType::T, {}, q1);
-  emitGate(GateType::Tdg, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-}
-
-// Replay a recorded window in reverse with T ↔ T† — the Unpebble primitive.
-void PebblingMethod::appendAdjoint(size_t startIdx, size_t endIdx) {
-  for (size_t i = endIdx; i > startIdx; --i) {
-    const auto &gate = result_.gates[i - 1];
-    GateType dag = gate.type;
-    switch (gate.type) {
-    case GateType::T:
-      dag = GateType::Tdg;
-      break;
-    case GateType::Tdg:
-      dag = GateType::T;
-      break;
-    default:
-      break;
-    }
-    emitGate(dag, gate.controls, gate.target);
-  }
-}
-
-void PebblingMethod::emitGate(GateType type, std::vector<uint32_t> controls,
-                              uint32_t target) {
-  result_.gates.push_back({type, std::move(controls), target});
-}
+// Gadget bodies (ladders, adjoint replay, gate append) now live in
+// ToffoliGadgets (gadgets::) and are shared with Existing/Proposed.
 
 // ── Diagnostics ───────────────────────────────────────────────────────────
 

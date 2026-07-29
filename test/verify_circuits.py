@@ -296,7 +296,7 @@ def verify_all(data_dir: str, strict: bool = False) -> tuple:
     total = 0
     failures = []
 
-    methods = ["current", "existing", "proposed", "pebbling"]
+    methods = ["current", "existing", "proposed", "pebbling_proposed", "pebbling_existing"]
 
     print(f"{'#':>3} | {'PIs':>3} | {'Method':>10} | {'Ref TT':>10} | "
           f"{'Sim TT':>10} | {'SV':>4} | {'QCEC':>12}")

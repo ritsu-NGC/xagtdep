@@ -9,6 +9,7 @@
 #define PROPOSEDMETHOD_H
 
 #include "QCGateList.h"
+#include "ToffoliGadgets.h"
 #include "XagContext.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -43,14 +44,11 @@ private:
   uint32_t emitAndOnePI(mockturtle::xag_network::node node,     // Fig 12
                         std::vector<mockturtle::xag_network::signal> &fanins);
 
-  // ── Decomposition helpers (exact gate sequences from figures) ────────
-  void emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2);    // Fig 9 (3 T)
-  void emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2);  // Fig 10 (3 T)
-
   // ── Utility ──────────────────────────────────────────────────────────
   bool isSimpleNode(mockturtle::xag_network::node node) const;
   bool isOutputNode(mockturtle::xag_network::node node) const;
-  void appendAdjoint(size_t startIdx, size_t endIdx);
+  // Thin forwarder to gadgets::emitGate — the shared gate/ladder/adjoint
+  // primitives live in ToffoliGadgets.
   void emitGate(GateType type, std::vector<uint32_t> controls, uint32_t target);
 
   // ── State ────────────────────────────────────────────────────────────

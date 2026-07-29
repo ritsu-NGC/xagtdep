@@ -377,6 +377,104 @@ static bool testEmitReuseDemo() {
   return pass;
 }
 
+/// A single primary-output AND (both inputs PIs) — isolates the PO core.
+static mockturtle::xag_network buildAndPoCase() {
+  mockturtle::xag_network xag;
+  auto a = xag.create_pi();
+  auto b = xag.create_pi();
+  xag.create_po(xag.create_and(a, b));
+  return xag;
+}
+
+/// Byte-identity golden for Pebbling-over-Proposed (ω / relative-phase family).
+/// Captured on the pre-refactor implementation; guards that the ToffoliGadgets
+/// extraction changes not a single emitted gate. Hand-built XAGs + explicit
+/// schedules only (random-seed XAGs are not reproducible across platforms).
+static const char *kGoldenReuseOmega =
+    R"GOLD({"num_qubits":7,"num_pis":3,"num_ancillas":4,"output_qubit":5,"gates":[{"type":"cx","controls":[1],"target":3},{"type":"cx","controls":[0],"target":3},{"type":"h","controls":[],"target":4},{"type":"tdg","controls":[],"target":4},{"type":"cx","controls":[4],"target":2},{"type":"cx","controls":[3],"target":4},{"type":"cx","controls":[2],"target":3},{"type":"t","controls":[],"target":2},{"type":"tdg","controls":[],"target":3},{"type":"t","controls":[],"target":4},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[3],"target":4},{"type":"cx","controls":[4],"target":2},{"type":"h","controls":[],"target":4},{"type":"cx","controls":[0],"target":3},{"type":"cx","controls":[1],"target":3},{"type":"cx","controls":[4],"target":3},{"type":"cx","controls":[0],"target":3},{"type":"h","controls":[],"target":5},{"type":"cx","controls":[6],"target":1},{"type":"cx","controls":[5],"target":6},{"type":"cx","controls":[1],"target":5},{"type":"t","controls":[],"target":1},{"type":"tdg","controls":[],"target":5},{"type":"t","controls":[],"target":6},{"type":"cx","controls":[1],"target":5},{"type":"cx","controls":[5],"target":6},{"type":"cx","controls":[6],"target":1},{"type":"cx","controls":[3],"target":6},{"type":"cx","controls":[6],"target":1},{"type":"cx","controls":[5],"target":6},{"type":"cx","controls":[1],"target":5},{"type":"tdg","controls":[],"target":1},{"type":"t","controls":[],"target":5},{"type":"tdg","controls":[],"target":6},{"type":"cx","controls":[1],"target":5},{"type":"cx","controls":[5],"target":6},{"type":"cx","controls":[6],"target":1},{"type":"h","controls":[],"target":5},{"type":"cx","controls":[3],"target":6},{"type":"cx","controls":[0],"target":3},{"type":"cx","controls":[4],"target":3},{"type":"cx","controls":[1],"target":3},{"type":"cx","controls":[0],"target":3},{"type":"h","controls":[],"target":4},{"type":"cx","controls":[4],"target":2},{"type":"cx","controls":[3],"target":4},{"type":"cx","controls":[2],"target":3},{"type":"tdg","controls":[],"target":4},{"type":"t","controls":[],"target":3},{"type":"tdg","controls":[],"target":2},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[3],"target":4},{"type":"cx","controls":[4],"target":2},{"type":"t","controls":[],"target":4},{"type":"h","controls":[],"target":4},{"type":"cx","controls":[0],"target":3},{"type":"cx","controls":[1],"target":3}]})GOLD";
+static const char *kGoldenAndPoOmega =
+    R"GOLD({"num_qubits":4,"num_pis":2,"num_ancillas":2,"output_qubit":2,"gates":[{"type":"h","controls":[],"target":2},{"type":"cx","controls":[3],"target":0},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[0],"target":2},{"type":"t","controls":[],"target":0},{"type":"tdg","controls":[],"target":2},{"type":"t","controls":[],"target":3},{"type":"cx","controls":[0],"target":2},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[3],"target":0},{"type":"cx","controls":[1],"target":3},{"type":"cx","controls":[3],"target":0},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[0],"target":2},{"type":"tdg","controls":[],"target":0},{"type":"t","controls":[],"target":2},{"type":"tdg","controls":[],"target":3},{"type":"cx","controls":[0],"target":2},{"type":"cx","controls":[2],"target":3},{"type":"cx","controls":[3],"target":0},{"type":"h","controls":[],"target":2},{"type":"cx","controls":[1],"target":3}]})GOLD";
+
+static bool testGoldenOmega() {
+  bool pass = true;
+
+  auto check = [&](const std::string &got, const char *golden,
+                   const char *label) {
+    bool ok = got == golden;
+    if (!ok)
+      errs() << "[PebblingTest::GoldenOmega." << label << "] RECORD>>>" << got
+             << "<<<\n";
+    errs() << "[PebblingTest::GoldenOmega." << label << "] "
+           << (ok ? "PASSED" : "FAILED (see RECORD line to refresh golden)")
+           << "\n";
+    pass &= ok;
+  };
+
+  // Reuse case: PO AND core (helper wire) + intermediate AND + two XORs +
+  // unpebble/appendAdjoint + rebuild.
+  {
+    auto rc = buildReuseCase();
+    auto ctx = mkCtx(rc.xag);
+    check(PebblingMethod::translate(ctx, rc.schedule).toJSON(),
+          kGoldenReuseOmega, "reuse");
+  }
+  // Single AND at a primary output — the ω PO core in isolation.
+  {
+    auto xag = buildAndPoCase();
+    auto ctx = mkCtx(xag);
+    check(PebblingMethod::translate(ctx).toJSON(), kGoldenAndPoOmega, "andPo");
+  }
+
+  return pass;
+}
+
+static uint32_t tCount(const QCGateList &gl) {
+  uint32_t n = 0;
+  for (const auto &g : gl.gates)
+    if (g.type == GateType::T || g.type == GateType::Tdg)
+      ++n;
+  return n;
+}
+
+/// Pebbling-over-Existing (Exact family): identical wires to the ω family,
+/// with T-count higher by exactly 2 per primary-output AND node. Equal
+/// function is proven by the QCEC lane (pebbling_existing column).
+static bool testExactFamily() {
+  bool pass = true;
+
+  // Reuse case has exactly one PO-AND node (n4) -> ΔT = +2, wires unchanged.
+  {
+    auto rc = buildReuseCase();
+    auto ctx = mkCtx(rc.xag);
+    QCGateList omega = PebblingMethod::translate(ctx, rc.schedule);
+    QCGateList exact =
+        PebblingMethod::translate(ctx, rc.schedule, GadgetFamily::Exact);
+    bool ok = exact.num_qubits == omega.num_qubits &&
+              exact.num_ancillas == omega.num_ancillas &&
+              exact.output_qubit == omega.output_qubit &&
+              tCount(exact) == tCount(omega) + 2;
+    errs() << "[PebblingTest::ExactFamily.reuse] qubits=" << exact.num_qubits
+           << " T " << tCount(omega) << "->" << tCount(exact) << " "
+           << (ok ? "PASSED" : "FAILED") << "\n";
+    pass &= ok;
+  }
+  // Single PO-AND in isolation: ω core = 6 T, exact core = 8 T, same wires.
+  {
+    auto xag = buildAndPoCase();
+    auto ctx = mkCtx(xag);
+    QCGateList omega = PebblingMethod::translate(ctx);
+    QCGateList exact = PebblingMethod::translate(ctx, GadgetFamily::Exact);
+    bool ok = exact.num_qubits == omega.num_qubits && tCount(omega) == 6 &&
+              tCount(exact) == 8;
+    errs() << "[PebblingTest::ExactFamily.andPo] T " << tCount(omega) << "->"
+           << tCount(exact) << " qubits=" << exact.num_qubits << " "
+           << (ok ? "PASSED" : "FAILED") << "\n";
+    pass &= ok;
+  }
+
+  return pass;
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 int main() {
@@ -391,6 +489,8 @@ int main() {
   pass &= testEvaluateErrorSentinel();
   pass &= testEvaluatePipeline();
   pass &= testEmitReuseDemo();
+  pass &= testGoldenOmega();
+  pass &= testExactFamily();
 
   errs() << "\n[PebblingTest] " << (pass ? "ALL PASSED" : "FAILURES") << "\n";
   return pass ? 0 : 1;

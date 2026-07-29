@@ -5,6 +5,7 @@ option(XAGTDEP_ENABLE_PYTHON "Enable Qiskit Python integration for QASM output" 
 # Source files
 set(QC_SOURCES
     QC.cpp
+    ToffoliGadgets.cpp
     XAGToGateList.cpp
     ExistingMethod.cpp
     ProposedMethod.cpp

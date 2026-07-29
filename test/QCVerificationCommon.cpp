@@ -126,19 +126,24 @@ bool runXagCase(const mockturtle::xag_network &xag, const XagCaseConfig &cfg,
     if (pebbling)
       ctx.pebbling = *pebbling;
 
-    // Run all 4 translators (synthesis is cheap; metadata stays complete).
+    // Run all translators (synthesis is cheap; metadata stays complete).
+    // Pebbling runs over both gadget families: the default ω (== Proposed) and
+    // the phase-exact Existing family, so the QCEC lane verifies both.
     QCGateList gl_cur = XAGToGateList::translate(ctx);
     QCGateList gl_ex = ExistingMethod::translate(ctx);
     QCGateList gl_pr = ProposedMethod::translate(ctx);
     QCGateList gl_pb = PebblingMethod::translate(ctx);
+    QCGateList gl_pb_ex = PebblingMethod::translate(ctx, GadgetFamily::Exact);
 
     Metrics m_cur = computeMetrics(gl_cur);
     Metrics m_ex = computeMetrics(gl_ex);
     Metrics m_pr = computeMetrics(gl_pr);
     Metrics m_pb = computeMetrics(gl_pb);
+    Metrics m_pb_ex = computeMetrics(gl_pb_ex);
 
     bool ok = !gl_cur.gates.empty() && !gl_ex.gates.empty() &&
-              !gl_pr.gates.empty() && !gl_pb.gates.empty() && constraint_ok;
+              !gl_pr.gates.empty() && !gl_pb.gates.empty() &&
+              !gl_pb_ex.gates.empty() && constraint_ok;
 
     auto printRow = [&](const char *m_name, const Metrics &m) {
       char buf[256];
@@ -155,8 +160,10 @@ bool runXagCase(const mockturtle::xag_network &xag, const XagCaseConfig &cfg,
       printRow("Existing", m_ex);
     if (method == "all" || method == "proposed")
       printRow("Proposed", m_pr);
-    if (method == "all" || method == "pebbling")
-      printRow("Pebbling", m_pb);
+    if (method == "all" || method == "pebbling_proposed")
+      printRow("Peb-Prop", m_pb);
+    if (method == "all" || method == "pebbling_existing")
+      printRow("Peb-Exist", m_pb_ex);
 
     std::string prefix = dataDir + "/xag_" + std::to_string(idx);
     if (method == "all" || method == "current")
@@ -165,8 +172,10 @@ bool runXagCase(const mockturtle::xag_network &xag, const XagCaseConfig &cfg,
       writeFile(prefix + "_existing.json", gl_ex.toJSON());
     if (method == "all" || method == "proposed")
       writeFile(prefix + "_proposed.json", gl_pr.toJSON());
-    if (method == "all" || method == "pebbling")
-      writeFile(prefix + "_pebbling.json", gl_pb.toJSON());
+    if (method == "all" || method == "pebbling_proposed")
+      writeFile(prefix + "_pebbling_proposed.json", gl_pb.toJSON());
+    if (method == "all" || method == "pebbling_existing")
+      writeFile(prefix + "_pebbling_existing.json", gl_pb_ex.toJSON());
 
     // Structure dump: the exact graph + node indices for the SAT-solver side
     // (random XAGs are not reproducible across platforms from params alone).
@@ -185,11 +194,15 @@ bool runXagCase(const mockturtle::xag_network &xag, const XagCaseConfig &cfg,
         ",\"output_qubit_current\":" + std::to_string(gl_cur.output_qubit) +
         ",\"output_qubit_existing\":" + std::to_string(gl_ex.output_qubit) +
         ",\"output_qubit_proposed\":" + std::to_string(gl_pr.output_qubit) +
-        ",\"output_qubit_pebbling\":" + std::to_string(gl_pb.output_qubit) +
+        ",\"output_qubit_pebbling_proposed\":" +
+        std::to_string(gl_pb.output_qubit) +
+        ",\"output_qubit_pebbling_existing\":" +
+        std::to_string(gl_pb_ex.output_qubit) +
         ",\"metrics_current\":" + metricsJSON(m_cur) +
         ",\"metrics_existing\":" + metricsJSON(m_ex) +
         ",\"metrics_proposed\":" + metricsJSON(m_pr) +
-        ",\"metrics_pebbling\":" + metricsJSON(m_pb) + "}";
+        ",\"metrics_pebbling_proposed\":" + metricsJSON(m_pb) +
+        ",\"metrics_pebbling_existing\":" + metricsJSON(m_pb_ex) + "}";
     writeFile(prefix + "_meta.json", meta);
 
     return ok;

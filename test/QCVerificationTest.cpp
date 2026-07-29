@@ -23,7 +23,8 @@ struct CliArgs {
   bool have_seed = false, have_pis = false, have_ands = false, have_xors = false;
   uint64_t seed = 0;
   uint32_t pis = 0, ands = 0, xors = 0;
-  std::string method = "all"; // current | existing | proposed | pebbling | all
+  std::string method =
+      "all"; // current|existing|proposed|pebbling_proposed|pebbling_existing|all
   std::string data_dir = "";
   std::string sequence_file = ""; // pebbling schedule JSON (single-XAG mode)
   bool verify = false;
@@ -40,7 +41,8 @@ static void printUsage() {
             "  --pis <N>       number of primary inputs\n"
             "  --ands <N>      number of AND gates\n"
             "  --xors <N>      number of XOR gates\n"
-            "  --method <M>    current|existing|proposed|pebbling|all\n"
+            "  --method <M>    current|existing|proposed|pebbling_proposed|"
+            "pebbling_existing|all\n"
             "                  (default: all)\n"
             "  --data-dir <P>  output directory (default: verification_data\n"
             "                  in sweep mode, verification_data_single in\n"
@@ -118,9 +120,12 @@ static bool parseArgs(int argc, char **argv, CliArgs &out) {
   }
   if (out.method != "all" && out.method != "current" &&
       out.method != "existing" && out.method != "proposed" &&
-      out.method != "pebbling") {
+      out.method != "pebbling_proposed" &&
+      out.method != "pebbling_existing") {
     errs() << "Invalid --method: " << out.method
-           << " (expected: current|existing|proposed|pebbling|all)\n";
+           << " (expected: "
+              "current|existing|proposed|pebbling_proposed|pebbling_existing|"
+              "all)\n";
     return false;
   }
   if (!out.sequence_file.empty() && !out.single_mode) {
