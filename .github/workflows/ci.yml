@@ -39,6 +39,13 @@ jobs:
       - name: CIQCVerification (passing-set synthesis)
         run: ./build/CIQCVerification --data-dir build/verification_data_ci
 
+      # Emit OpenQASM 2.0 per (XAG, method) into a qasm/ subfolder of each data
+      # dir, so the uploaded artifact carries QASM alongside the gate-list JSON.
+      - name: Dump QASM (per method)
+        run: |
+          python test/dump_qasm.py build/verification_data_ci
+          python test/dump_qasm.py build/verification_data_pebbling_demo
+
       - name: Strict equivalence verification
         run: python test/verify_circuits.py --strict build/verification_data_ci
 
