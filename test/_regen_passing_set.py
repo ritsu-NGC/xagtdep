@@ -17,7 +17,7 @@ import verify_circuits as V
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "QC"))
 from qc_synthesis import json_to_circuit
 
-METHODS = ["current", "existing", "proposed"]
+METHODS = ["current", "existing", "proposed", "pebbling_proposed", "pebbling_existing"]
 
 
 def strict_result(data_path, idx, method, meta):

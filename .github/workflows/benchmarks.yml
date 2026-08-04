@@ -1,0 +1,108 @@
+name: Benchmarks
+# Manual-only. Builds and runs the gen_bench benchmark generator (verified +
+# big tiers), strict-QCEC-verifies the small "verified" tier, and posts a
+# per-method qubit/T comparison for the big tier to the run summary.
+#
+# NOTE: workflow_dispatch only exposes the "Run workflow" button once this file
+# exists on the default branch (main). Until then, merge it (or trigger via
+# `gh workflow run benchmarks.yml --ref <branch>` once it's on main).
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 16
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main"
+          sudo apt-get update
+          sudo apt-get install -y llvm-16-dev
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install mqt.qcec
+
+      - name: Configure
+        run: cmake -B build -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm
+
+      - name: Build (FetchContent deps + libraries)
+        run: cmake --build build -j$(nproc)
+
+      # gen_bench is compiled directly against the FetchContent deps, mirroring
+      # test/benchmarks/build_and_run.sh (it is not a CMake target).
+      - name: Compile gen_bench
+        run: |
+          R="$PWD"
+          DEPS="$R/build/_deps"
+          INC="-I$R/include -I$R/test -I$R/src/QC"
+          for d in "$DEPS"/*-src/include; do [ -d "$d" ] && INC+=" -I$d"; done
+          for d in "$DEPS"/caterpillar-src/lib/*; do
+            [ -d "$d" ] && INC+=" -I$d"
+            [ -d "$d/include" ] && INC+=" -I$d/include"
+          done
+          INC+=" -I$(llvm-config-16 --includedir)"
+          LIBS="$(llvm-config-16 --ldflags) $(llvm-config-16 --libs support) $(llvm-config-16 --system-libs)"
+          g++ -std=c++17 -O2 -pthread -DFMT_HEADER_ONLY=1 $INC \
+            "$R/test/benchmarks/gen_bench.cpp" \
+            "$R/test/QCVerificationCommon.cpp" \
+            "$R/src/QC/ToffoliGadgets.cpp" \
+            "$R/src/QC/XAGToGateList.cpp" \
+            "$R/src/QC/ExistingMethod.cpp" \
+            "$R/src/QC/ProposedMethod.cpp" \
+            "$R/src/QC/PebblingMethod.cpp" \
+            "$R/src/QC/BennettSequence.cpp" \
+            "$R/src/QC/SequenceJson.cpp" \
+            "$R/src/QC/RandomXAG.cpp" \
+            -o build/gen_bench $LIBS -pthread
+
+      - name: Generate benchmark set (verified + big tiers)
+        run: ./build/gen_bench build/benchmark_data
+
+      - name: Strict equivalence — verified tier
+        run: python test/verify_circuits.py --strict build/benchmark_data/verified
+
+      - name: Big-tier qubit/T summary
+        if: always()
+        run: |
+          python3 - build/benchmark_data >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys, glob, os
+          root = sys.argv[1]
+          print("## Benchmark — big tier (Bennett schedule, metrics only)\n")
+          print("Qubits per method; **Δq = Peb-Prop − Proposed** (negative = pebbling uses fewer qubits).\n")
+          print("| PIs | Gates | Existing q | Proposed q | Peb-Prop q | Δq | Prop T | Peb T |")
+          print("|---|---|---|---|---|---|---|---|")
+          files = sorted(glob.glob(os.path.join(root, "big", "*_meta.json")),
+                         key=lambda p: json.load(open(p)).get("num_gates", 0))
+          for f in files:
+              m = json.load(open(f))
+              def q(n): return m.get(f"metrics_{n}", {}).get("qubits")
+              def t(n): return m.get(f"metrics_{n}", {}).get("t_count")
+              ex, pr, pb = q("existing"), q("proposed"), q("pebbling_proposed")
+              dq = (pb - pr) if (pb is not None and pr is not None) else None
+              cells = [m.get("config_pis", "?"), m.get("num_gates", "?"),
+                       ex if ex is not None else "—",
+                       pr if pr is not None else "—",
+                       pb if pb is not None else "—",
+                       dq if dq is not None else "—",
+                       t("proposed") if t("proposed") is not None else "—",
+                       t("pebbling_proposed") if t("pebbling_proposed") is not None else "—"]
+              print("| " + " | ".join(str(c) for c in cells) + " |")
+          PY
+
+      - name: Upload benchmark data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: build/benchmark_data/
+          retention-days: 30

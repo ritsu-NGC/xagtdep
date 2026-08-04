@@ -116,7 +116,7 @@ def compare_all(data_dir: str, q3satlib_path: str):
             q3_metrics = {"t_count": "ERR", "cnot": "ERR", "total": "ERR"}
 
         # Print comparison for each of our methods.
-        for method_key in ["current", "existing", "proposed"]:
+        for method_key in ["current", "existing", "proposed", "pebbling_proposed", "pebbling_existing"]:
             m = meta.get(f"metrics_{method_key}", {})
             t_cnt = m.get("t_count", "?")
             t_dep = m.get("t_depth", "?")

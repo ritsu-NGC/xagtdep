@@ -39,8 +39,20 @@ jobs:
       - name: CIQCVerification (passing-set synthesis)
         run: ./build/CIQCVerification --data-dir build/verification_data_ci
 
+      # Emit OpenQASM 2.0 per (XAG, method) into a qasm/ subfolder of each data
+      # dir, so the uploaded artifact carries QASM alongside the gate-list JSON.
+      - name: Dump QASM (per method)
+        run: |
+          python test/dump_qasm.py build/verification_data_ci
+          python test/dump_qasm.py build/verification_data_pebbling_demo
+
       - name: Strict equivalence verification
         run: python test/verify_circuits.py --strict build/verification_data_ci
+
+      # PebblingTest (ctest step) emits the hand-scheduled reuse case: same
+      # function as Bennett at fewer qubits, proven equivalent here.
+      - name: Strict equivalence — pebbling reuse demo
+        run: python test/verify_circuits.py --strict build/verification_data_pebbling_demo
 
       - name: Upload verification data
         if: always()
@@ -49,4 +61,5 @@ jobs:
           name: ci-verification-results
           path: |
             build/verification_data_ci/
+            build/verification_data_pebbling_demo/
           retention-days: 30

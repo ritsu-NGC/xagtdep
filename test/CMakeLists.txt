@@ -37,6 +37,24 @@ add_test(NAME NewMethodTest COMMAND NewMethodTest)
 add_test(NAME QCTest COMMAND QCTest)
 add_test(NAME XAGTest COMMAND XAGTest)
 
+# Pebbling pipeline unit tests — needs the shared runner for the reuse-demo
+# emission, so it is wired like QCVerificationTest rather than via
+# add_module_test.
+add_executable(PebblingTest
+    PebblingTest.cpp
+    $<TARGET_OBJECTS:QCVerificationCommonObj>
+)
+target_link_libraries(PebblingTest QCObj NewMethodObj XAGObj ${llvm_libs})
+target_include_directories(PebblingTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/QC
+)
+set_target_properties(PebblingTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+add_test(NAME PebblingTest COMMAND PebblingTest
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
 # Shared per-XAG runner used by QCVerificationTest and CIQCVerification.
 add_library(QCVerificationCommonObj OBJECT QCVerificationCommon.cpp)
 target_include_directories(QCVerificationCommonObj PRIVATE

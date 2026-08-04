@@ -14,7 +14,8 @@ namespace xagtdep {
 enum class SynthesisAlgorithm {
   Current,        // Original XAGToGateList (Toffoli-based)
   ExistingMethod, // Algorithm 1: exact Toffoli decomposition, compute||uncompute
-  ProposedMethod  // Algorithm 2: relative-phase Toffoli, no top-level uncompute
+  ProposedMethod, // Algorithm 2: relative-phase Toffoli, no top-level uncompute
+  PebblingMethod  // Sequence-driven: ctx.pebbling (or Bennett fallback)
 };
 
 /// Core algorithm class: consumes the XagContext produced by XAGPass

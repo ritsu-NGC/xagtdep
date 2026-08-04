@@ -2,6 +2,7 @@
 #include "QC.h"
 #include "NewMethod.h"
 #include "ExistingMethod.h"
+#include "PebblingMethod.h"
 #include "ProposedMethod.h"
 #include "QCGateList.h"
 #include "XAGToGateList.h"
@@ -31,21 +32,41 @@ void QC::evaluate(const XagContext &ctx, SynthesisAlgorithm algo) {
     return;
   }
 
-  // Select synthesis algorithm.
+  // Select synthesis algorithm. An invalid pebbling sequence throws
+  // PebblingError; QCLib is loaded into opt, so no exception may cross the
+  // plugin boundary — and callers must be able to see the failure, so clear
+  // any previous output and store a machine-readable error sentinel.
   QCGateList gateList;
-  switch (algo) {
-  case SynthesisAlgorithm::Current:
-    errs() << "[QC] Using Current (XAGToGateList) algorithm.\n";
-    gateList = XAGToGateList::translate(ctx);
-    break;
-  case SynthesisAlgorithm::ExistingMethod:
-    errs() << "[QC] Using Existing Method (Algorithm 1).\n";
-    gateList = ExistingMethod::translate(ctx);
-    break;
-  case SynthesisAlgorithm::ProposedMethod:
-    errs() << "[QC] Using Proposed Method (Algorithm 2).\n";
-    gateList = ProposedMethod::translate(ctx);
-    break;
+  try {
+    switch (algo) {
+    case SynthesisAlgorithm::Current:
+      errs() << "[QC] Using Current (XAGToGateList) algorithm.\n";
+      gateList = XAGToGateList::translate(ctx);
+      break;
+    case SynthesisAlgorithm::ExistingMethod:
+      errs() << "[QC] Using Existing Method (Algorithm 1).\n";
+      gateList = ExistingMethod::translate(ctx);
+      break;
+    case SynthesisAlgorithm::ProposedMethod:
+      errs() << "[QC] Using Proposed Method (Algorithm 2).\n";
+      gateList = ProposedMethod::translate(ctx);
+      break;
+    case SynthesisAlgorithm::PebblingMethod:
+      errs() << "[QC] Using Pebbling Method (sequence-driven"
+             << (ctx.pebbling.empty() ? ", Bennett fallback" : "") << ").\n";
+      gateList = PebblingMethod::translate(ctx);
+      break;
+    }
+  } catch (const std::exception &e) {
+    errs() << "[QC] ERROR: synthesis failed: " << e.what() << "\n";
+    std::string escaped;
+    for (char c : std::string(e.what())) {
+      if (c == '"' || c == '\\')
+        escaped += '\\';
+      escaped += c;
+    }
+    qasm_output_ = "{\"error\":\"" + escaped + "\"}";
+    return;
   }
   std::string json = gateList.toJSON();
   errs() << "[QC] Gate list: " << json << "\n";

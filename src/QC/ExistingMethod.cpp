@@ -161,19 +161,9 @@ uint32_t ExistingMethod::emitAndBothPI(
 
   uint32_t f = next_qubit_++;
 
-  if (c_a)
-    emitGate(GateType::X, {}, q_a);
-  if (c_b)
-    emitGate(GateType::X, {}, q_b);
-
-  emitGate(GateType::H, {}, f);
-  emitCCiZ(q_a, q_b, f);
-  emitGate(GateType::H, {}, f);
-
-  if (c_a)
-    emitGate(GateType::X, {}, q_a);
-  if (c_b)
-    emitGate(GateType::X, {}, q_b);
+  // Fig 6 both-inputs-live relative-phase AND (shared with Proposed/Pebbling);
+  // H;Tdg;CC-iωZ;H expands to the same gates as H;CC-iZ;H.
+  gadgets::emitAndIntermediateLive(result_, q_a, q_b, f, c_a, c_b);
 
   node_to_qubit_[xag_.node_to_index(node)] = f;
   return f;
@@ -217,7 +207,7 @@ uint32_t ExistingMethod::emitAndOutput(
   // 2. CC-iZ(B, z → a_i)
   if (c_b)
     emitGate(GateType::X, {}, q_b);
-  emitCCiZ(q_b, q_zero, a_i);
+  gadgets::emitCCiZ(result_, q_b, q_zero, a_i);
   if (c_b)
     emitGate(GateType::X, {}, q_b);
 
@@ -239,7 +229,7 @@ uint32_t ExistingMethod::emitAndOutput(
   // 5. CC-iZ†(B, z → a_i)
   if (c_b)
     emitGate(GateType::X, {}, q_b);
-  emitCCiZdg(q_b, q_zero, a_i);
+  gadgets::emitCCiZdg(result_, q_b, q_zero, a_i);
   if (c_b)
     emitGate(GateType::X, {}, q_b);
 
@@ -254,7 +244,7 @@ uint32_t ExistingMethod::emitAndOutput(
     emitGate(GateType::X, {}, q_g);
 
   // 8. A† — uncompute the A window.
-  appendAdjoint(computeStart, computeEnd);
+  gadgets::appendAdjoint(result_, computeStart, computeEnd);
 
   // Qubits computed inside the window are back to |0⟩ — drop their cache
   // entries so later consumers recompute instead of reading dead wires.
@@ -305,7 +295,7 @@ uint32_t ExistingMethod::emitAndOnePI(
   // 2. CC-iZ(G, z → a_0)
   if (c_g)
     emitGate(GateType::X, {}, q_g);
-  emitCCiZ(q_g, q_zero, a_0);
+  gadgets::emitCCiZ(result_, q_g, q_zero, a_0);
   if (c_g)
     emitGate(GateType::X, {}, q_g);
 
@@ -319,7 +309,7 @@ uint32_t ExistingMethod::emitAndOnePI(
   // 4. CC-iZ†(G, z → a_0)
   if (c_g)
     emitGate(GateType::X, {}, q_g);
-  emitCCiZdg(q_g, q_zero, a_0);
+  gadgets::emitCCiZdg(result_, q_g, q_zero, a_0);
   if (c_g)
     emitGate(GateType::X, {}, q_g);
 
@@ -335,35 +325,13 @@ uint32_t ExistingMethod::emitAndOnePI(
 //   T†(c); CX(c→a); CX(b→c); CX(a→b); T(a); T†(b); T(c);
 //   CX(a→b); CX(b→c); CX(c→a)         with (a,b,c) = (q0,q1,q2)
 
-void ExistingMethod::emitCCiZ(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::Tdg, {}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::T, {}, q0);
-  emitGate(GateType::Tdg, {}, q1);
-  emitGate(GateType::T, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-}
+// Body now provided by gadgets::emitCCiZ (ToffoliGadgets).
 
 // ── Fig 7: exact CC-iZ† decomposition (4 T, 6 CNOT) ─────────────────────
 //   CX(c→a); CX(b→c); CX(a→b); T†(a); T(b); T†(c);
 //   CX(a→b); CX(b→c); CX(c→a); T(c)
 
-void ExistingMethod::emitCCiZdg(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::Tdg, {}, q0);
-  emitGate(GateType::T, {}, q1);
-  emitGate(GateType::Tdg, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::T, {}, q2);
-}
+// Body now provided by gadgets::emitCCiZdg (ToffoliGadgets).
 
 // ── Utility ──────────────────────────────────────────────────────────────
 
@@ -377,25 +345,7 @@ bool ExistingMethod::isOutputNode(mockturtle::xag_network::node node) const {
   return po_nodes_.count(xag_.node_to_index(node)) > 0;
 }
 
-void ExistingMethod::appendAdjoint(size_t startIdx, size_t endIdx) {
-  for (size_t i = endIdx; i > startIdx; --i) {
-    const auto &gate = result_.gates[i - 1];
-    GateType dag = gate.type;
-    switch (gate.type) {
-    case GateType::T:
-      dag = GateType::Tdg;
-      break;
-    case GateType::Tdg:
-      dag = GateType::T;
-      break;
-    default:
-      break; // H, X, CNOT, Toffoli are self-adjoint
-    }
-    emitGate(dag, gate.controls, gate.target);
-  }
-}
-
 void ExistingMethod::emitGate(GateType type, std::vector<uint32_t> controls,
                               uint32_t target) {
-  result_.gates.push_back({type, std::move(controls), target});
+  gadgets::emitGate(result_, type, std::move(controls), target);
 }

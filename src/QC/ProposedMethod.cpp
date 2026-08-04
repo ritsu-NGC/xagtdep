@@ -150,20 +150,8 @@ uint32_t ProposedMethod::emitAndBothPI(
 
   uint32_t f = next_qubit_++;
 
-  if (c_a)
-    emitGate(GateType::X, {}, q_a);
-  if (c_b)
-    emitGate(GateType::X, {}, q_b);
-
-  emitGate(GateType::H, {}, f);
-  emitGate(GateType::Tdg, {}, f);
-  emitCCiwZ(q_a, q_b, f);
-  emitGate(GateType::H, {}, f);
-
-  if (c_a)
-    emitGate(GateType::X, {}, q_a);
-  if (c_b)
-    emitGate(GateType::X, {}, q_b);
+  // Fig 8 both-inputs-live relative-phase AND (shared with Existing/Pebbling).
+  gadgets::emitAndIntermediateLive(result_, q_a, q_b, f, c_a, c_b);
 
   node_to_qubit_[xag_.node_to_index(node)] = f;
   return f;
@@ -203,7 +191,7 @@ uint32_t ProposedMethod::emitAndOutput(
   // 2. CC-iωZ(B, z → a_i)
   if (c_b)
     emitGate(GateType::X, {}, q_b);
-  emitCCiwZ(q_b, q_zero, a_i);
+  gadgets::emitCCiwZ(result_, q_b, q_zero, a_i);
   if (c_b)
     emitGate(GateType::X, {}, q_b);
 
@@ -225,7 +213,7 @@ uint32_t ProposedMethod::emitAndOutput(
   // 5. CC-iωZ†(B, z → a_i)
   if (c_b)
     emitGate(GateType::X, {}, q_b);
-  emitCCiwZdg(q_b, q_zero, a_i);
+  gadgets::emitCCiwZdg(result_, q_b, q_zero, a_i);
   if (c_b)
     emitGate(GateType::X, {}, q_b);
 
@@ -240,7 +228,7 @@ uint32_t ProposedMethod::emitAndOutput(
     emitGate(GateType::X, {}, q_g);
 
   // 8. A† — uncompute the A window.
-  appendAdjoint(computeStart, computeEnd);
+  gadgets::appendAdjoint(result_, computeStart, computeEnd);
 
   // Drop cache entries for nodes whose wires were just uncomputed.
   std::vector<uint32_t> toErase;
@@ -324,32 +312,12 @@ uint32_t ProposedMethod::emitAndOnePI(
 //   CX(c→a); CX(b→c); CX(a→b); T(a); T†(b); T(c);
 //   CX(a→b); CX(b→c); CX(c→a)         with (a,b,c) = (q0,q1,q2)
 
-void ProposedMethod::emitCCiwZ(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::T, {}, q0);
-  emitGate(GateType::Tdg, {}, q1);
-  emitGate(GateType::T, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-}
+// Body now provided by gadgets::emitCCiwZ (ToffoliGadgets).
 
 // ── Fig 10: CC-iωZ† decomposition (3 T, 6 CNOT) ─────────────────────────
 // Same network with T ↔ T†.
 
-void ProposedMethod::emitCCiwZdg(uint32_t q0, uint32_t q1, uint32_t q2) {
-  emitGate(GateType::CNOT, {q2}, q0);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::Tdg, {}, q0);
-  emitGate(GateType::T, {}, q1);
-  emitGate(GateType::Tdg, {}, q2);
-  emitGate(GateType::CNOT, {q0}, q1);
-  emitGate(GateType::CNOT, {q1}, q2);
-  emitGate(GateType::CNOT, {q2}, q0);
-}
+// Body now provided by gadgets::emitCCiwZdg (ToffoliGadgets).
 
 // ── Utility ──────────────────────────────────────────────────────────────
 
@@ -363,25 +331,7 @@ bool ProposedMethod::isOutputNode(mockturtle::xag_network::node node) const {
   return po_nodes_.count(xag_.node_to_index(node)) > 0;
 }
 
-void ProposedMethod::appendAdjoint(size_t startIdx, size_t endIdx) {
-  for (size_t i = endIdx; i > startIdx; --i) {
-    const auto &gate = result_.gates[i - 1];
-    GateType dag = gate.type;
-    switch (gate.type) {
-    case GateType::T:
-      dag = GateType::Tdg;
-      break;
-    case GateType::Tdg:
-      dag = GateType::T;
-      break;
-    default:
-      break;
-    }
-    emitGate(dag, gate.controls, gate.target);
-  }
-}
-
 void ProposedMethod::emitGate(GateType type, std::vector<uint32_t> controls,
                               uint32_t target) {
-  result_.gates.push_back({type, std::move(controls), target});
+  gadgets::emitGate(result_, type, std::move(controls), target);
 }
