@@ -26,12 +26,14 @@ endfunction()
 
 # Create test executables
 add_module_test(DavioDecompositionTest DavioDecomposition)
+add_module_test(AIGReaderTest QC NewMethodObj XAGObj)
 add_module_test(FunctionTest Function)
 add_module_test(NewMethodTest NewMethod)
 add_module_test(QCTest QC NewMethodObj XAGObj)
 add_module_test(XAGTest XAG NewMethodObj)
 
 add_test(NAME DavioDecompositionTest COMMAND DavioDecompositionTest)
+add_test(NAME AIGReaderTest COMMAND AIGReaderTest)
 add_test(NAME FunctionTest COMMAND FunctionTest)
 add_test(NAME NewMethodTest COMMAND NewMethodTest)
 add_test(NAME QCTest COMMAND QCTest)
