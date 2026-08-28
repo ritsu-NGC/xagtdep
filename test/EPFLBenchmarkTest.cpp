@@ -19,6 +19,8 @@
 //
 // DCDEBUG: Timeout mechanism for individual circuits (5 minute limit per circuit).
 // Set EPFL_DISABLE_TIMEOUT=1 env var to disable, or remove DCDEBUG markers when ready.
+// DCDEBUG: Memory profiling and synthesis state cleanup.
+// Set EPFL_DISABLE_INSTRUMENTATION=1 env var to disable all instrumentation.
 
 #include "AIGReader.h"
 #include "AIGToQC.h"
@@ -40,8 +42,17 @@ using namespace xagtdep;
 // DCDEBUG: 5 minute timeout per circuit (in seconds)
 static const int CIRCUIT_TIMEOUT_SECONDS = 300;
 
+// DCDEBUG: Check if instrumentation is disabled via env var
+static bool isInstrumentationDisabled() {
+  const char *disable_instr = std::getenv("EPFL_DISABLE_INSTRUMENTATION");
+  return disable_instr && std::string(disable_instr) == "1";
+}
+
 // DCDEBUG: Get current RSS memory usage in MB (Linux only)
 static uint64_t getRSSMB() {
+  if (isInstrumentationDisabled()) {
+    return 0;
+  }
   const char *proc_status = "/proc/self/status";
   std::ifstream ifs(proc_status);
   if (!ifs.is_open()) {
@@ -117,6 +128,9 @@ static bool checkTimeout(
 
 // DCDEBUG: Cleanup synthesis method internal state if needed
 static void cleanupSynthesisState() {
+  if (isInstrumentationDisabled()) {
+    return;
+  }
   // Placeholder for any global cleanup needed by synthesis methods.
   // If ExistingMethod, ProposedMethod, or XAGToGateList maintain static caches,
   // add cleanup calls here.
@@ -443,24 +457,31 @@ int main(int argc, char **argv) {
                          ? std::string(argv[1])
                          : EPFL_BENCHMARK_DIR;
 
-  // DCDEBUG: Print timeout settings
-  const char *disable_timeout = std::getenv("EPFL_DISABLE_TIMEOUT");
-  if (disable_timeout && std::string(disable_timeout) == "1") {
-    std::cout << "[EPFLBenchmark] Timeout checks DISABLED (EPFL_DISABLE_TIMEOUT=1)\n";
+  // DCDEBUG: Check if instrumentation is disabled
+  bool instr_disabled = isInstrumentationDisabled();
+  if (instr_disabled) {
+    std::cout << "[EPFLBenchmark] Instrumentation DISABLED (EPFL_DISABLE_INSTRUMENTATION=1)\n";
   } else {
-    std::cout << "[EPFLBenchmark] Timeout limit: " << CIRCUIT_TIMEOUT_SECONDS
-              << " seconds per circuit\n";
-    std::cout << "[EPFLBenchmark] Set EPFL_DISABLE_TIMEOUT=1 to disable timeout checks\n";
-  }
+    // DCDEBUG: Print timeout settings
+    const char *disable_timeout = std::getenv("EPFL_DISABLE_TIMEOUT");
+    if (disable_timeout && std::string(disable_timeout) == "1") {
+      std::cout << "[EPFLBenchmark] Timeout checks DISABLED (EPFL_DISABLE_TIMEOUT=1)\n";
+    } else {
+      std::cout << "[EPFLBenchmark] Timeout limit: " << CIRCUIT_TIMEOUT_SECONDS
+                << " seconds per circuit\n";
+      std::cout << "[EPFLBenchmark] Set EPFL_DISABLE_TIMEOUT=1 to disable timeout checks\n";
+    }
 
-  // DCDEBUG: Print memory profiling status
-  uint64_t test_rss = getRSSMB();
-  if (test_rss > 0) {
-    std::cout << "[EPFLBenchmark] Memory profiling ENABLED (current RSS: " << test_rss
-              << " MB)\n";
-  } else {
-    std::cout << "[EPFLBenchmark] Memory profiling DISABLED (/proc/self/status not available)\n";
+    // DCDEBUG: Print memory profiling status
+    uint64_t test_rss = getRSSMB();
+    if (test_rss > 0) {
+      std::cout << "[EPFLBenchmark] Memory profiling ENABLED (current RSS: " << test_rss
+                << " MB)\n";
+    } else {
+      std::cout << "[EPFLBenchmark] Memory profiling DISABLED (/proc/self/status not available)\n";
+    }
   }
+  std::cout << "[EPFLBenchmark] Set EPFL_DISABLE_INSTRUMENTATION=1 to disable all instrumentation\n";
   std::cout << "\n";
 
   const std::vector<Circuit> circuits = {
