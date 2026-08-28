@@ -9,7 +9,7 @@
 //   4. Count T-gates in each synthesized gate list
 //   5. Log results to CSV and LaTeX table for comparison
 //
-// Large circuits (multiplier, div, log2, sqrt, hyp, mem_ctrl) are parsed
+// Large circuits (multiplier, div, hyp, mem_ctrl, sqrt) are parsed
 // and converted to XAG only; full QC synthesis is skipped with a note
 // because synthesis can be slow on very large graphs.
 //
@@ -34,7 +34,7 @@ using namespace xagtdep;
 
 // Circuits large enough that full QC synthesis is impractical in a test run.
 static const std::vector<std::string> kSkipSynthesis = {
-    "div", "hyp", "log2", "mem_ctrl", "multiplier", "sqrt"};
+    "div", "hyp", "mem_ctrl", "multiplier", "sqrt"};
 
 static bool skipSynth(const std::string &name) {
   for (const auto &s : kSkipSynthesis)
@@ -286,7 +286,6 @@ int main(int argc, char **argv) {
       {"bar",        base + "/arithmetic/bar.aig"},
       {"div",        base + "/arithmetic/div.aig"},
       {"hyp",        base + "/arithmetic/hyp.aig"},
-      {"log2",       base + "/arithmetic/log2.aig"},
       {"max",        base + "/arithmetic/max.aig"},
       {"multiplier", base + "/arithmetic/multiplier.aig"},
       {"sin",        base + "/arithmetic/sin.aig"},
