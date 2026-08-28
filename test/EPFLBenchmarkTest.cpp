@@ -16,6 +16,9 @@
 // Results are written to:
 //   - CSV log file (default: epfl_benchmarks.csv, or EPFL_LOG_FILE env var)
 //   - LaTeX table file (default: epfl_benchmarks.tex, or EPFL_TEX_FILE env var)
+//
+// DCDEBUG: Timeout mechanism for individual circuits (5 minute limit per circuit).
+// Set EPFL_DISABLE_TIMEOUT=1 env var to disable, or remove DCDEBUG markers when ready.
 
 #include "AIGReader.h"
 #include "AIGToQC.h"
@@ -25,6 +28,7 @@
 #include "XAGToGateList.h"
 #include "XagContext.h"
 #include "llvm/Support/raw_ostream.h"
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -32,6 +36,9 @@
 #include <vector>
 
 using namespace xagtdep;
+
+// DCDEBUG: 5 minute timeout per circuit (in seconds)
+static const int CIRCUIT_TIMEOUT_SECONDS = 300;
 
 // Circuits large enough that full QC synthesis is impractical in a test run.
 static const std::vector<std::string> kSkipSynthesis = {
@@ -61,6 +68,7 @@ struct Result {
   uint32_t num_qubits_proposed;
   uint32_t t_count_proposed;
   bool synth_skipped;
+  bool timeout_exceeded;
   bool passed;
 };
 
@@ -75,11 +83,28 @@ static uint32_t countTgates(const QCGateList &gl) {
   return count;
 }
 
+// DCDEBUG: Check if circuit processing has exceeded timeout.
+static bool checkTimeout(
+    const std::chrono::steady_clock::time_point &circuit_start) {
+  const char *disable_timeout = std::getenv("EPFL_DISABLE_TIMEOUT");
+  if (disable_timeout && std::string(disable_timeout) == "1") {
+    return false;  // Timeout disabled
+  }
+  auto now = std::chrono::steady_clock::now();
+  auto elapsed =
+      std::chrono::duration_cast<std::chrono::seconds>(now - circuit_start);
+  return elapsed.count() > CIRCUIT_TIMEOUT_SECONDS;
+}
+
 // Returns false on any failure and populates the result struct.
 static bool runOne(const Circuit &c, Result &result) {
+  // DCDEBUG: Start circuit timer
+  auto circuit_start = std::chrono::steady_clock::now();
+
   result.name = c.name;
   result.passed = true;
   result.synth_skipped = false;
+  result.timeout_exceeded = false;
   result.num_qubits_current = 0;
   result.t_count_current = 0;
   result.num_qubits_existing = 0;
@@ -137,6 +162,17 @@ static bool runOne(const Circuit &c, Result &result) {
       // Current method (XAGToGateList)
       std::cout << " [Current..." << std::flush;
       {
+        // DCDEBUG: Check timeout before synthesis
+        if (checkTimeout(circuit_start)) {
+          std::cout << " TIMEOUT]";
+          result.timeout_exceeded = true;
+          result.synth_skipped = true;
+          std::cout << " [SKIPPED]\n";
+          llvm::errs() << "[EPFLBenchmark] " << c.name
+                       << ": TIMEOUT exceeded (>5 min)\n";
+          return true;
+        }
+
         QCGateList gl_current = XAGToGateList::translate(ctx);
         result.num_qubits_current = gl_current.num_qubits;
         result.t_count_current = countTgates(gl_current);
@@ -148,6 +184,16 @@ static bool runOne(const Circuit &c, Result &result) {
       // Existing method
       std::cout << " [Existing..." << std::flush;
       {
+        // DCDEBUG: Check timeout before synthesis
+        if (checkTimeout(circuit_start)) {
+          std::cout << " TIMEOUT]";
+          result.timeout_exceeded = true;
+          std::cout << " [SKIPPED]\n";
+          llvm::errs() << "[EPFLBenchmark] " << c.name
+                       << ": TIMEOUT exceeded (>5 min)\n";
+          return true;
+        }
+
         QCGateList gl_existing = ExistingMethod::translate(ctx);
         result.num_qubits_existing = gl_existing.num_qubits;
         result.t_count_existing = countTgates(gl_existing);
@@ -159,6 +205,16 @@ static bool runOne(const Circuit &c, Result &result) {
       // Proposed method
       std::cout << " [Proposed..." << std::flush;
       {
+        // DCDEBUG: Check timeout before synthesis
+        if (checkTimeout(circuit_start)) {
+          std::cout << " TIMEOUT]";
+          result.timeout_exceeded = true;
+          std::cout << " [SKIPPED]\n";
+          llvm::errs() << "[EPFLBenchmark] " << c.name
+                       << ": TIMEOUT exceeded (>5 min)\n";
+          return true;
+        }
+
         QCGateList gl_proposed = ProposedMethod::translate(ctx);
         result.num_qubits_proposed = gl_proposed.num_qubits;
         result.t_count_proposed = countTgates(gl_proposed);
@@ -191,6 +247,9 @@ static bool runOne(const Circuit &c, Result &result) {
   } else {
     llvm::errs() << " [synth skipped]";
   }
+  if (result.timeout_exceeded) {
+    llvm::errs() << " [TIMEOUT]";
+  }
   llvm::errs() << ")\n";
   return result.passed;
 }
@@ -210,7 +269,7 @@ static void writeCSVFile(const std::string &csvfile,
       << "num_qubits_current,t_count_current,"
       << "num_qubits_existing,t_count_existing,"
       << "num_qubits_proposed,t_count_proposed,"
-      << "synth_skipped,passed\n";
+      << "synth_skipped,timeout_exceeded,passed\n";
 
   // Data rows
   for (const auto &r : results) {
@@ -218,7 +277,9 @@ static void writeCSVFile(const std::string &csvfile,
         << r.num_ands << "," << r.num_qubits_current << "," << r.t_count_current
         << "," << r.num_qubits_existing << "," << r.t_count_existing << ","
         << r.num_qubits_proposed << "," << r.t_count_proposed << ","
-        << (r.synth_skipped ? "1" : "0") << "," << (r.passed ? "1" : "0") << "\n";
+        << (r.synth_skipped ? "1" : "0") << ","
+        << (r.timeout_exceeded ? "1" : "0") << "," << (r.passed ? "1" : "0")
+        << "\n";
   }
 
   out.close();
@@ -258,8 +319,13 @@ static void writeTexFile(const std::string &texfile,
     out << r.name << " & " << r.num_inputs << " & " << r.num_outputs << " & "
         << r.num_ands << " & ";
 
-    if (r.synth_skipped) {
-      out << "— & — & — & — & — & — & — & — & \\textit{skipped}";
+    if (r.synth_skipped || r.timeout_exceeded) {
+      out << "— & — & — & — & — & — & — & — & ";
+      if (r.timeout_exceeded) {
+        out << "\\textit{timeout}";
+      } else {
+        out << "\\textit{skipped}";
+      }
     } else {
       // Current method
       out << r.num_qubits_current << " & " << r.t_count_current << " & ";
@@ -304,6 +370,17 @@ int main(int argc, char **argv) {
   std::string base = (argc > 1)
                          ? std::string(argv[1])
                          : EPFL_BENCHMARK_DIR;
+
+  // DCDEBUG: Print timeout settings
+  const char *disable_timeout = std::getenv("EPFL_DISABLE_TIMEOUT");
+  if (disable_timeout && std::string(disable_timeout) == "1") {
+    std::cout << "[EPFLBenchmark] Timeout checks DISABLED (EPFL_DISABLE_TIMEOUT=1)\n";
+  } else {
+    std::cout << "[EPFLBenchmark] Timeout limit: " << CIRCUIT_TIMEOUT_SECONDS
+              << " seconds per circuit\n";
+    std::cout << "[EPFLBenchmark] Set EPFL_DISABLE_TIMEOUT=1 to disable timeout checks\n";
+  }
+  std::cout << "\n";
 
   const std::vector<Circuit> circuits = {
       // arithmetic
