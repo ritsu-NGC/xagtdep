@@ -40,6 +40,25 @@ using namespace xagtdep;
 // DCDEBUG: 5 minute timeout per circuit (in seconds)
 static const int CIRCUIT_TIMEOUT_SECONDS = 300;
 
+// DCDEBUG: Get current RSS memory usage in MB (Linux only)
+static uint64_t getRSSMB() {
+  const char *proc_status = "/proc/self/status";
+  std::ifstream ifs(proc_status);
+  if (!ifs.is_open()) {
+    return 0;  // Not available on this platform
+  }
+  std::string line;
+  while (std::getline(ifs, line)) {
+    if (line.substr(0, 6) == "VmRSS:") {
+      // VmRSS is in KB, convert to MB
+      size_t pos = line.find_last_not_of(" \t");
+      std::string val_str = line.substr(6, pos - 5);
+      return std::stoull(val_str) / 1024;
+    }
+  }
+  return 0;
+}
+
 // Circuits large enough that full QC synthesis is impractical in a test run.
 static const std::vector<std::string> kSkipSynthesis = {
     "div", "hyp", "mem_ctrl", "multiplier", "sqrt"};
@@ -94,6 +113,13 @@ static bool checkTimeout(
   auto elapsed =
       std::chrono::duration_cast<std::chrono::seconds>(now - circuit_start);
   return elapsed.count() > CIRCUIT_TIMEOUT_SECONDS;
+}
+
+// DCDEBUG: Cleanup synthesis method internal state if needed
+static void cleanupSynthesisState() {
+  // Placeholder for any global cleanup needed by synthesis methods.
+  // If ExistingMethod, ProposedMethod, or XAGToGateList maintain static caches,
+  // add cleanup calls here.
 }
 
 // Returns false on any failure and populates the result struct.
@@ -154,10 +180,14 @@ static bool runOne(const Circuit &c, Result &result) {
   // Step 4: QC synthesis (skipped for very large circuits).
   if (!skipSynth(c.name)) {
     try {
-      // Create XagContext for synthesis
+      // DCDEBUG: Create context with const-ref to XAG (avoids copy if supported)
+      // For now, still using value semantics, but pass by const-ref inside
       XagContext ctx;
       ctx.xag = xag;
       ctx.optimized = true;
+
+      // DCDEBUG: Memory profiling before synthesis
+      uint64_t mem_before = getRSSMB();
 
       // Current method (XAGToGateList)
       std::cout << " [Current..." << std::flush;
@@ -178,8 +208,20 @@ static bool runOne(const Circuit &c, Result &result) {
         result.t_count_current = countTgates(gl_current);
         result.passed &= (gl_current.num_pis > 0 && !gl_current.gates.empty());
         gl_current.gates.clear();  // Explicit memory cleanup
+        gl_current.gates.shrink_to_fit();  // Force reallocation
+
+        // DCDEBUG: Memory profiling after synthesis
+        uint64_t mem_after = getRSSMB();
+        if (mem_after > 0 && mem_before > 0) {
+          llvm::errs() << "[EPFLBenchmark-MEM] Current: " << mem_before
+                       << " MB -> " << mem_after << " MB (delta: "
+                       << (int64_t)mem_after - (int64_t)mem_before << " MB)\n";
+        }
       }
       std::cout << "]" << std::flush;
+
+      // DCDEBUG: Cleanup synthesis state between methods
+      cleanupSynthesisState();
 
       // Existing method
       std::cout << " [Existing..." << std::flush;
@@ -194,13 +236,28 @@ static bool runOne(const Circuit &c, Result &result) {
           return true;
         }
 
+        // DCDEBUG: Memory profiling before synthesis
+        mem_before = getRSSMB();
+
         QCGateList gl_existing = ExistingMethod::translate(ctx);
         result.num_qubits_existing = gl_existing.num_qubits;
         result.t_count_existing = countTgates(gl_existing);
         result.passed &= (gl_existing.num_pis > 0 && !gl_existing.gates.empty());
         gl_existing.gates.clear();  // Explicit memory cleanup
+        gl_existing.gates.shrink_to_fit();  // Force reallocation
+
+        // DCDEBUG: Memory profiling after synthesis
+        mem_after = getRSSMB();
+        if (mem_after > 0 && mem_before > 0) {
+          llvm::errs() << "[EPFLBenchmark-MEM] Existing: " << mem_before
+                       << " MB -> " << mem_after << " MB (delta: "
+                       << (int64_t)mem_after - (int64_t)mem_before << " MB)\n";
+        }
       }
       std::cout << "]" << std::flush;
+
+      // DCDEBUG: Cleanup synthesis state between methods
+      cleanupSynthesisState();
 
       // Proposed method
       std::cout << " [Proposed..." << std::flush;
@@ -215,13 +272,28 @@ static bool runOne(const Circuit &c, Result &result) {
           return true;
         }
 
+        // DCDEBUG: Memory profiling before synthesis
+        mem_before = getRSSMB();
+
         QCGateList gl_proposed = ProposedMethod::translate(ctx);
         result.num_qubits_proposed = gl_proposed.num_qubits;
         result.t_count_proposed = countTgates(gl_proposed);
         result.passed &= (gl_proposed.num_pis > 0 && !gl_proposed.gates.empty());
         gl_proposed.gates.clear();  // Explicit memory cleanup
+        gl_proposed.gates.shrink_to_fit();  // Force reallocation
+
+        // DCDEBUG: Memory profiling after synthesis
+        mem_after = getRSSMB();
+        if (mem_after > 0 && mem_before > 0) {
+          llvm::errs() << "[EPFLBenchmark-MEM] Proposed: " << mem_before
+                       << " MB -> " << mem_after << " MB (delta: "
+                       << (int64_t)mem_after - (int64_t)mem_before << " MB)\n";
+        }
       }
       std::cout << "]" << std::flush;
+
+      // DCDEBUG: Cleanup synthesis state after all methods
+      cleanupSynthesisState();
 
     } catch (const std::exception &e) {
       llvm::errs() << "[EPFLBenchmark] " << c.name << ": SYNTH ERROR — "
@@ -379,6 +451,15 @@ int main(int argc, char **argv) {
     std::cout << "[EPFLBenchmark] Timeout limit: " << CIRCUIT_TIMEOUT_SECONDS
               << " seconds per circuit\n";
     std::cout << "[EPFLBenchmark] Set EPFL_DISABLE_TIMEOUT=1 to disable timeout checks\n";
+  }
+
+  // DCDEBUG: Print memory profiling status
+  uint64_t test_rss = getRSSMB();
+  if (test_rss > 0) {
+    std::cout << "[EPFLBenchmark] Memory profiling ENABLED (current RSS: " << test_rss
+              << " MB)\n";
+  } else {
+    std::cout << "[EPFLBenchmark] Memory profiling DISABLED (/proc/self/status not available)\n";
   }
   std::cout << "\n";
 
