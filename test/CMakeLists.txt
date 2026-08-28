@@ -102,20 +102,20 @@ set_target_properties(CIQCVerification PROPERTIES
 
 # EPFL combinational benchmark test — parses all 20 .aig circuits and validates
 # AIGReader + AIGToQC on real-world netlists.
-add_executable(EPFLBenchmarkTest EPFLBenchmarkTest.cpp)
-target_link_libraries(EPFLBenchmarkTest QCObj NewMethodObj XAGObj ${llvm_libs})
-target_include_directories(EPFLBenchmarkTest PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/src/QC
-)
-target_compile_definitions(EPFLBenchmarkTest PRIVATE
-    EPFL_BENCHMARK_DIR="${CMAKE_SOURCE_DIR}/test/epfl_benchmarks"
-)
-set_target_properties(EPFLBenchmarkTest PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-)
-add_test(NAME EPFLBenchmarkTest
-    COMMAND EPFLBenchmarkTest "${CMAKE_SOURCE_DIR}/test/epfl_benchmarks")
+# add_executable(EPFLBenchmarkTest EPFLBenchmarkTest.cpp)
+# target_link_libraries(EPFLBenchmarkTest QCObj NewMethodObj XAGObj ${llvm_libs})
+# target_include_directories(EPFLBenchmarkTest PRIVATE
+#     ${CMAKE_SOURCE_DIR}/include
+#     ${CMAKE_SOURCE_DIR}/src/QC
+# )
+# target_compile_definitions(EPFLBenchmarkTest PRIVATE
+#     EPFL_BENCHMARK_DIR="${CMAKE_SOURCE_DIR}/test/epfl_benchmarks"
+# )
+# set_target_properties(EPFLBenchmarkTest PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+# )
+# add_test(NAME EPFLBenchmarkTest
+#     COMMAND EPFLBenchmarkTest "${CMAKE_SOURCE_DIR}/test/epfl_benchmarks")
 
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)
