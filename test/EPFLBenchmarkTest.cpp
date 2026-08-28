@@ -27,6 +27,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,9 @@ static bool runOne(const Circuit &c, Result &result) {
   result.num_qubits_proposed = 0;
   result.t_count_proposed = 0;
 
+  // Print status to stdout
+  std::cout << "Processing: " << c.name << std::flush;
+
   // Step 1 & 2: parse + structural checks.
   AIG aig;
   try {
@@ -94,6 +98,7 @@ static bool runOne(const Circuit &c, Result &result) {
     llvm::errs() << "[EPFLBenchmark] " << c.name << ": PARSE ERROR — "
                  << e.what() << "\n";
     result.passed = false;
+    std::cout << " [FAILED]\n";
     return false;
   }
 
@@ -113,6 +118,7 @@ static bool runOne(const Circuit &c, Result &result) {
     llvm::errs() << "[EPFLBenchmark] " << c.name << ": XAG CONV ERROR — "
                  << e.what() << "\n";
     result.passed = false;
+    std::cout << " [FAILED]\n";
     return false;
   }
 
@@ -129,6 +135,7 @@ static bool runOne(const Circuit &c, Result &result) {
       ctx.optimized = true;
 
       // Current method (XAGToGateList)
+      std::cout << " [Current..." << std::flush;
       {
         QCGateList gl_current = XAGToGateList::translate(ctx);
         result.num_qubits_current = gl_current.num_qubits;
@@ -136,8 +143,10 @@ static bool runOne(const Circuit &c, Result &result) {
         result.passed &= (gl_current.num_pis > 0 && !gl_current.gates.empty());
         gl_current.gates.clear();  // Explicit memory cleanup
       }
+      std::cout << "]" << std::flush;
 
       // Existing method
+      std::cout << " [Existing..." << std::flush;
       {
         QCGateList gl_existing = ExistingMethod::translate(ctx);
         result.num_qubits_existing = gl_existing.num_qubits;
@@ -145,8 +154,10 @@ static bool runOne(const Circuit &c, Result &result) {
         result.passed &= (gl_existing.num_pis > 0 && !gl_existing.gates.empty());
         gl_existing.gates.clear();  // Explicit memory cleanup
       }
+      std::cout << "]" << std::flush;
 
       // Proposed method
+      std::cout << " [Proposed..." << std::flush;
       {
         QCGateList gl_proposed = ProposedMethod::translate(ctx);
         result.num_qubits_proposed = gl_proposed.num_qubits;
@@ -154,16 +165,21 @@ static bool runOne(const Circuit &c, Result &result) {
         result.passed &= (gl_proposed.num_pis > 0 && !gl_proposed.gates.empty());
         gl_proposed.gates.clear();  // Explicit memory cleanup
       }
+      std::cout << "]" << std::flush;
 
     } catch (const std::exception &e) {
       llvm::errs() << "[EPFLBenchmark] " << c.name << ": SYNTH ERROR — "
                    << e.what() << "\n";
       result.passed = false;
+      std::cout << " [FAILED]\n";
       return false;
     }
   } else {
+    std::cout << " [skipped]" << std::flush;
     result.synth_skipped = true;
   }
+
+  std::cout << " [" << (result.passed ? "PASS" : "FAIL") << "]\n";
 
   llvm::errs() << "[EPFLBenchmark] " << c.name << ": "
                << (result.passed ? "PASSED" : "FAILED") << " (ins=" << aig.num_inputs
@@ -332,6 +348,8 @@ int main(int argc, char **argv) {
                                     : "epfl_benchmarks.tex";
   writeTexFile(texfile, results);
 
+  std::cout << "\n[EPFLBenchmark] Overall: " << (all_pass ? "PASSED" : "FAILED")
+            << "\n";
   llvm::errs() << "[EPFLBenchmark] Overall: " << (all_pass ? "PASSED" : "FAILED")
                << "\n";
   return all_pass ? 0 : 1;
