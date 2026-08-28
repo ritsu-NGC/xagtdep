@@ -12,6 +12,10 @@ This project contains five LLVM-integrated modules for various analysis and opti
 - **QC**: Quality check evaluation
 - **XAG**: XAG optimization algorithms
 
+It also provides an AIGER reader/converter for EPFL/ABC benchmark flows:
+- `AIGReader` parses `aag` (ASCII) and `aig` (binary) files.
+- `AIGToQC` converts AIGER → `mockturtle::xag_network` (`XagContext`) → `QCGateList`.
+
 All modules are implemented as dynamically loadable LLVM passes that can be used with LLVM's `opt` tool or integrated into custom LLVM-based workflows.
 
 ## Quick Start
@@ -33,6 +37,7 @@ make
 ./NewMethodTest
 ./QCTest
 ./XAGTest
+./AIGReaderTest
 
 # Run all LLVM passes on test input
 ./run_passes.sh
@@ -55,6 +60,19 @@ See [LLVM_INTEGRATION.md](LLVM_INTEGRATION.md) for comprehensive documentation o
 - API reference
 - Integration examples
 - Troubleshooting
+
+### AIG benchmark flow (EPFL/ABC)
+
+```cpp
+#include "AIGToQC.h"
+
+// Parse AIGER, build XAG context for QC, and synthesize gates.
+xagtdep::QCGateList gates = xagtdep::AIGToQC::synthesize("benchmark.aig");
+```
+
+Data flow:
+
+`AIG(AIGER) -> mockturtle::xag_network -> XagContext -> QC gate list (-> QASM via QC pipeline)`
 
 ## Requirements
 
