@@ -1,17 +1,17 @@
 // EPFLBenchmarkTest.cpp — smoke-tests every EPFL combinational benchmark
-// (.aig) through AIGReader and the AIGToQC pipeline, and logs T-counts.
+// (.aig) through AIGReader and the AIGToQC pipeline, comparing xagtdep's
+// synthesis methods (Current, Existing, Proposed) and logging T-counts.
 //
-// For each circuit we check:
-//   1. AIGReader can parse the binary file without throwing.
-//   2. The parsed AIG has at least one primary input, one primary output,
-//      and at least one AND gate.
-//   3. toXagNetwork() produces a non-trivial xag_network (PIs and gates
-//      preserved).
-//   4. AIGToQC::synthesize() returns a non-empty gate list.
+// For each circuit we:
+//   1. Parse the binary .aig file
+//   2. Convert to mockturtle::xag_network
+//   3. Run all synthesis algorithms: Current, ExistingMethod, ProposedMethod
+//   4. Count T-gates in each synthesized gate list
+//   5. Log results to CSV and LaTeX table for comparison
 //
 // Large circuits (multiplier, div, log2, sqrt, hyp, mem_ctrl) are parsed
 // and converted to XAG only; full QC synthesis is skipped with a note
-// because caterpillar's pebbling strategy can be slow on very large graphs.
+// because synthesis can be slow on very large graphs.
 //
 // Results are written to:
 //   - CSV log file (default: epfl_benchmarks.csv, or EPFL_LOG_FILE env var)
@@ -19,7 +19,11 @@
 
 #include "AIGReader.h"
 #include "AIGToQC.h"
+#include "ExistingMethod.h"
+#include "ProposedMethod.h"
 #include "QCGateList.h"
+#include "XAGToGateList.h"
+#include "XagContext.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
 #include <fstream>
@@ -49,9 +53,12 @@ struct Result {
   uint32_t num_inputs;
   uint32_t num_outputs;
   uint32_t num_ands;
-  uint32_t num_qubits;
-  uint32_t t_count;
-  uint32_t total_gates;
+  uint32_t num_qubits_current;
+  uint32_t t_count_current;
+  uint32_t num_qubits_existing;
+  uint32_t t_count_existing;
+  uint32_t num_qubits_proposed;
+  uint32_t t_count_proposed;
   bool synth_skipped;
   bool passed;
 };
@@ -72,9 +79,12 @@ static bool runOne(const Circuit &c, Result &result) {
   result.name = c.name;
   result.passed = true;
   result.synth_skipped = false;
-  result.num_qubits = 0;
-  result.t_count = 0;
-  result.total_gates = 0;
+  result.num_qubits_current = 0;
+  result.t_count_current = 0;
+  result.num_qubits_existing = 0;
+  result.t_count_existing = 0;
+  result.num_qubits_proposed = 0;
+  result.t_count_proposed = 0;
 
   // Step 1 & 2: parse + structural checks.
   AIG aig;
@@ -112,19 +122,36 @@ static bool runOne(const Circuit &c, Result &result) {
 
   // Step 4: QC synthesis (skipped for very large circuits).
   if (!skipSynth(c.name)) {
-    QCGateList gl;
     try {
-      gl = AIGToQC::synthesize(c.path);
+      // Create XagContext for synthesis
+      XagContext ctx;
+      ctx.xag = xag;
+      ctx.optimized = true;
+
+      // Current method (XAGToGateList)
+      QCGateList gl_current = XAGToGateList::translate(ctx);
+      result.num_qubits_current = gl_current.num_qubits;
+      result.t_count_current = countTgates(gl_current);
+      result.passed &= (gl_current.num_pis > 0 && !gl_current.gates.empty());
+
+      // Existing method
+      QCGateList gl_existing = ExistingMethod::translate(ctx);
+      result.num_qubits_existing = gl_existing.num_qubits;
+      result.t_count_existing = countTgates(gl_existing);
+      result.passed &= (gl_existing.num_pis > 0 && !gl_existing.gates.empty());
+
+      // Proposed method
+      QCGateList gl_proposed = ProposedMethod::translate(ctx);
+      result.num_qubits_proposed = gl_proposed.num_qubits;
+      result.t_count_proposed = countTgates(gl_proposed);
+      result.passed &= (gl_proposed.num_pis > 0 && !gl_proposed.gates.empty());
+
     } catch (const std::exception &e) {
       llvm::errs() << "[EPFLBenchmark] " << c.name << ": SYNTH ERROR — "
                    << e.what() << "\n";
       result.passed = false;
       return false;
     }
-    result.num_qubits = gl.num_qubits;
-    result.total_gates = gl.gates.size();
-    result.t_count = countTgates(gl);
-    result.passed &= (gl.num_pis > 0 && !gl.gates.empty());
   } else {
     result.synth_skipped = true;
   }
@@ -133,8 +160,9 @@ static bool runOne(const Circuit &c, Result &result) {
                << (result.passed ? "PASSED" : "FAILED") << " (ins=" << aig.num_inputs
                << " outs=" << aig.num_outputs << " ands=" << aig.num_ands;
   if (!result.synth_skipped) {
-    llvm::errs() << " | qubits=" << result.num_qubits << " T-count=" << result.t_count
-                 << " total_gates=" << result.total_gates;
+    llvm::errs() << " | Current T=" << result.t_count_current
+                 << " Existing T=" << result.t_count_existing
+                 << " Proposed T=" << result.t_count_proposed;
   } else {
     llvm::errs() << " [synth skipped]";
   }
@@ -153,15 +181,19 @@ static void writeCSVFile(const std::string &csvfile,
   }
 
   // Header
-  out << "name,num_inputs,num_outputs,num_ands,num_qubits,t_count,total_gates,"
-         "synth_skipped,passed\n";
+  out << "name,num_inputs,num_outputs,num_ands,"
+      << "num_qubits_current,t_count_current,"
+      << "num_qubits_existing,t_count_existing,"
+      << "num_qubits_proposed,t_count_proposed,"
+      << "synth_skipped,passed\n";
 
   // Data rows
   for (const auto &r : results) {
     out << r.name << "," << r.num_inputs << "," << r.num_outputs << ","
-        << r.num_ands << "," << r.num_qubits << "," << r.t_count << ","
-        << r.total_gates << "," << (r.synth_skipped ? "1" : "0") << ","
-        << (r.passed ? "1" : "0") << "\n";
+        << r.num_ands << "," << r.num_qubits_current << "," << r.t_count_current
+        << "," << r.num_qubits_existing << "," << r.t_count_existing << ","
+        << r.num_qubits_proposed << "," << r.t_count_proposed << ","
+        << (r.synth_skipped ? "1" : "0") << "," << (r.passed ? "1" : "0") << "\n";
   }
 
   out.close();
@@ -180,16 +212,20 @@ static void writeTexFile(const std::string &texfile,
 
   // LaTeX table header
   out << "% EPFL Benchmark Results — Generated by EPFLBenchmarkTest\n"
+      << "% Comparison of xagtdep synthesis methods (Current, Existing, "
+         "Proposed)\n"
       << "% Paste this table into your LaTeX document.\n"
       << "\n"
       << "\\begin{table}[h]\n"
       << "\\centering\n"
-      << "\\caption{EPFL Benchmark Synthesis Results (xagtdep AIGReader + QC)}\n"
-      << "\\label{tab:epfl_results}\n"
-      << "\\begin{tabular}{|l|r|r|r|r|r|r|c|}\n"
+      << "\\caption{EPFL Benchmark T-count Comparison (xagtdep Synthesis "
+         "Methods)}\n"
+      << "\\label{tab:epfl_comparison}\n"
+      << "\\begin{tabular}{|l|r|r|r|rrr|rrr|rrr|}\n"
       << "\\hline\n"
-      << "Benchmark & PIs & POs & ANDs & Qubits & T-count & Total Gates & "
-         "Status \\\\\n"
+      << "Benchmark & PIs & POs & ANDs & \\multicolumn{3}{c|}{Current} & "
+         "\\multicolumn{3}{c|}{Existing} & \\multicolumn{3}{c|}{Proposed} \\\\\n"
+      << " & & & & q & T & $\\Delta$T & q & T & $\\Delta$T & q & T & Status \\\\\n"
       << "\\hline\n";
 
   // Data rows
@@ -198,10 +234,31 @@ static void writeTexFile(const std::string &texfile,
         << r.num_ands << " & ";
 
     if (r.synth_skipped) {
-      out << "— & — & — & \\textit{skipped}";
+      out << "— & — & — & — & — & — & — & — & \\textit{skipped}";
     } else {
-      out << r.num_qubits << " & " << r.t_count << " & " << r.total_gates
-          << " & " << (r.passed ? "\\checkmark" : "\\ding{55}");
+      // Current method
+      out << r.num_qubits_current << " & " << r.t_count_current << " & ";
+      if (r.t_count_proposed > 0) {
+        int delta = static_cast<int>(r.t_count_current) -
+                    static_cast<int>(r.t_count_proposed);
+        out << (delta >= 0 ? "+" : "") << delta << " & ";
+      } else {
+        out << "— & ";
+      }
+
+      // Existing method
+      out << r.num_qubits_existing << " & " << r.t_count_existing << " & ";
+      if (r.t_count_proposed > 0) {
+        int delta = static_cast<int>(r.t_count_existing) -
+                    static_cast<int>(r.t_count_proposed);
+        out << (delta >= 0 ? "+" : "") << delta << " & ";
+      } else {
+        out << "— & ";
+      }
+
+      // Proposed method
+      out << r.num_qubits_proposed << " & " << r.t_count_proposed << " & "
+          << (r.passed ? "\\checkmark" : "\\ding{55}");
     }
 
     out << " \\\\\n";
