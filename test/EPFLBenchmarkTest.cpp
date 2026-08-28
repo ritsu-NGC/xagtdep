@@ -200,8 +200,9 @@ static bool runOne(const Circuit &c, Result &result) {
       ctx.xag = xag;
       ctx.optimized = true;
 
-      // DCDEBUG: Memory profiling before synthesis
-      uint64_t mem_before = getRSSMB();
+      // DCDEBUG: Memory tracking variables
+      uint64_t mem_before = 0;
+      uint64_t mem_after = 0;
 
       // Current method (XAGToGateList)
       std::cout << " [Current..." << std::flush;
@@ -217,6 +218,7 @@ static bool runOne(const Circuit &c, Result &result) {
           return true;
         }
 
+        mem_before = getRSSMB();
         QCGateList gl_current = XAGToGateList::translate(ctx);
         result.num_qubits_current = gl_current.num_qubits;
         result.t_count_current = countTgates(gl_current);
@@ -225,7 +227,7 @@ static bool runOne(const Circuit &c, Result &result) {
         gl_current.gates.shrink_to_fit();  // Force reallocation
 
         // DCDEBUG: Memory profiling after synthesis
-        uint64_t mem_after = getRSSMB();
+        mem_after = getRSSMB();
         if (mem_after > 0 && mem_before > 0) {
           llvm::errs() << "[EPFLBenchmark-MEM] Current: " << mem_before
                        << " MB -> " << mem_after << " MB (delta: "
@@ -250,9 +252,7 @@ static bool runOne(const Circuit &c, Result &result) {
           return true;
         }
 
-        // DCDEBUG: Memory profiling before synthesis
         mem_before = getRSSMB();
-
         QCGateList gl_existing = ExistingMethod::translate(ctx);
         result.num_qubits_existing = gl_existing.num_qubits;
         result.t_count_existing = countTgates(gl_existing);
@@ -286,9 +286,7 @@ static bool runOne(const Circuit &c, Result &result) {
           return true;
         }
 
-        // DCDEBUG: Memory profiling before synthesis
         mem_before = getRSSMB();
-
         QCGateList gl_proposed = ProposedMethod::translate(ctx);
         result.num_qubits_proposed = gl_proposed.num_qubits;
         result.t_count_proposed = countTgates(gl_proposed);
