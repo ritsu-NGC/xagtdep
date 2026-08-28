@@ -85,7 +85,7 @@ add_test(NAME QCVerificationTest COMMAND QCVerificationTest
 # Bennett pebbling against the caterpillar-backed proposed path, and writes
 # CSV/LaTeX summaries.
 add_executable(RandomBooleanFunctionTest RandomBooleanFunctionTest.cpp)
-target_link_libraries(RandomBooleanFunctionTest QCObj NewMethodObj XAGObj ${llvm_libs})
+target_link_libraries(RandomBooleanFunctionTest QCObj NewMethodObj XAGObj caterpillar mockturtle ${llvm_libs})
 target_include_directories(RandomBooleanFunctionTest PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src/QC
