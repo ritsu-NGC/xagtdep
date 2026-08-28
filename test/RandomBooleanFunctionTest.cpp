@@ -12,6 +12,7 @@
 #include <caterpillar/structures/stg_gate.hpp>
 #include <caterpillar/synthesis/lhrs.hpp>
 #include <caterpillar/synthesis/strategies/xag_mapping_strategy.hpp>
+#include <tweedledum/gates/gate_set.hpp>
 #include <tweedledum/networks/netlist.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 using namespace llvm;
@@ -36,6 +38,7 @@ struct CliArgs {
   uint64_t seed = 0xcafeaffeULL;
   std::string output_csv = "random_bool_test.csv";
   std::string output_latex = "random_bool_test.tex";
+  std::string circuits_dir = "random_bool_circuits";
 };
 
 struct ResultRow {
@@ -72,6 +75,8 @@ static void printUsage() {
             "  --seed <N>          base seed for reproducibility (default: 0xcafeaffe)\n"
             "  --output-csv <P>    CSV output path (default: random_bool_test.csv)\n"
             "  --output-latex <P>  LaTeX output path (default: random_bool_test.tex)\n"
+            "  --circuits-dir <P>  directory for per-function circuit JSON files "
+            "(default: random_bool_circuits)\n"
             "  -h, --help          print this help\n";
 }
 
@@ -128,6 +133,11 @@ static bool parseArgs(int argc, char **argv, CliArgs &out) {
       if (!v)
         return false;
       out.output_latex = v;
+    } else if (a == "--circuits-dir") {
+      auto v = need("--circuits-dir");
+      if (!v)
+        return false;
+      out.circuits_dir = v;
     } else {
       errs() << "Unknown flag: " << a << "\n";
       return false;
@@ -247,7 +257,69 @@ static bool writeLatex(const std::string &path,
   return out.good();
 }
 
-static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_seed) {
+static bool ensureDir(const std::string &path) {
+  // Create all path components recursively.
+  for (size_t pos = 1; pos <= path.size(); ++pos) {
+    if (pos == path.size() || path[pos] == '/') {
+      std::string sub = path.substr(0, pos);
+      if (mkdir(sub.c_str(), 0755) != 0 && errno != EEXIST)
+        return false;
+    }
+  }
+  return true;
+}
+
+static std::string
+caterpillarNetlistToJSON(const tweedledum::netlist<caterpillar::stg_gate> &qnet) {
+  std::string json =
+      "{\"num_qubits\":" + std::to_string(qnet.num_qubits()) + ",\"gates\":[";
+  bool first = true;
+  qnet.foreach_cgate([&](auto &cgate) {
+    if (!first)
+      json += ",";
+    first = false;
+
+    const auto &gate = cgate.gate;
+    const char *type_str = "unknown";
+    auto op = gate.operation();
+    if (op == tweedledum::gate_set::t)
+      type_str = "t";
+    else if (op == tweedledum::gate_set::t_dagger)
+      type_str = "tdg";
+    else if (op == tweedledum::gate_set::pauli_x)
+      type_str = "x";
+    else if (op == tweedledum::gate_set::cx)
+      type_str = "cx";
+    else if (op == tweedledum::gate_set::mcx)
+      type_str = "ccx";
+    else if (op == tweedledum::gate_set::hadamard)
+      type_str = "h";
+
+    json += std::string("{\"type\":\"") + type_str + "\",\"controls\":[";
+    bool first_ctrl = true;
+    gate.foreach_control([&](auto c) {
+      if (!first_ctrl)
+        json += ",";
+      first_ctrl = false;
+      json += std::to_string(c.index());
+    });
+    json += "],\"target\":" +
+            std::to_string(gate.targets()[0].index()) + "}";
+  });
+  json += "]}";
+  return json;
+}
+
+static bool writeCircuit(const std::string &path, const std::string &json) {
+  std::ofstream f(path);
+  if (!f.is_open())
+    return false;
+  f << json;
+  return f.good();
+}
+
+static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_seed,
+                        const std::string &circuits_dir) {
   ResultRow row;
   row.qubit_count = qubits;
   row.function_id = function_id;
@@ -256,6 +328,8 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
   bool success = false;
   uint32_t and_pebbles = 0;
   size_t bennett_steps = 0;
+  QCGateList final_bennett_gl;
+  tweedledum::netlist<caterpillar::stg_gate> final_qnet;
 
   for (; attempt < 32; ++attempt) {
     row.seed = mixSeed(base_seed, qubits, function_id * 32u + attempt);
@@ -296,6 +370,8 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
 
     if (constraint_ok && and_pebbles > 0 && row.bennett_t_count > 0 &&
         row.caterpillar_t_count > 0) {
+      final_bennett_gl = std::move(bennett_gl);
+      final_qnet = std::move(qnet);
       success = true;
       break;
     }
@@ -321,6 +397,14 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     if (i)
       row.notes += "; ";
     row.notes += notes[i];
+  }
+
+  if (success && !circuits_dir.empty()) {
+    std::string base = circuits_dir + "/circuit_q" + std::to_string(qubits) +
+                       "_f" + std::to_string(function_id);
+    writeCircuit(base + "_bennett.json", final_bennett_gl.toJSON());
+    writeCircuit(base + "_caterpillar.json",
+                 caterpillarNetlistToJSON(final_qnet));
   }
 
   row.passed = success;
@@ -354,7 +438,13 @@ int main(int argc, char **argv) {
   errs() << "\nFunctions per qubit count: " << args.num_functions << "\n"
          << "Base seed: " << args.seed << "\n"
          << "CSV output: " << args.output_csv << "\n"
-         << "LaTeX output: " << args.output_latex << "\n\n";
+         << "LaTeX output: " << args.output_latex << "\n"
+         << "Circuits dir: " << args.circuits_dir << "\n\n";
+
+  if (!ensureDir(args.circuits_dir)) {
+    errs() << "Failed to create circuits directory: " << args.circuits_dir << "\n";
+    return 2;
+  }
 
   errs() << "qubits | function | seed               | Bennett T | Caterpillar T | "
             "Diff | Notes\n";
@@ -368,7 +458,7 @@ int main(int argc, char **argv) {
   for (uint32_t qubits : qubit_counts) {
     for (uint32_t function_id = 0; function_id < args.num_functions; ++function_id) {
       try {
-        ResultRow row = runOne(qubits, function_id, args.seed);
+        ResultRow row = runOne(qubits, function_id, args.seed, args.circuits_dir);
         rows.push_back(row);
 
         if (row.passed) {
@@ -428,6 +518,7 @@ int main(int argc, char **argv) {
 
   errs() << "\nWrote CSV report to " << args.output_csv << "\n";
   errs() << "Wrote LaTeX table to " << args.output_latex << "\n";
+  errs() << "Circuit JSON output directory: " << args.circuits_dir << "/\n";
   errs() << (all_pass ? "RandomBooleanFunctionTest PASSED\n"
                       : "RandomBooleanFunctionTest FAILED\n");
   return all_pass ? 0 : 1;
