@@ -129,22 +129,31 @@ static bool runOne(const Circuit &c, Result &result) {
       ctx.optimized = true;
 
       // Current method (XAGToGateList)
-      QCGateList gl_current = XAGToGateList::translate(ctx);
-      result.num_qubits_current = gl_current.num_qubits;
-      result.t_count_current = countTgates(gl_current);
-      result.passed &= (gl_current.num_pis > 0 && !gl_current.gates.empty());
+      {
+        QCGateList gl_current = XAGToGateList::translate(ctx);
+        result.num_qubits_current = gl_current.num_qubits;
+        result.t_count_current = countTgates(gl_current);
+        result.passed &= (gl_current.num_pis > 0 && !gl_current.gates.empty());
+        gl_current.gates.clear();  // Explicit memory cleanup
+      }
 
       // Existing method
-      QCGateList gl_existing = ExistingMethod::translate(ctx);
-      result.num_qubits_existing = gl_existing.num_qubits;
-      result.t_count_existing = countTgates(gl_existing);
-      result.passed &= (gl_existing.num_pis > 0 && !gl_existing.gates.empty());
+      {
+        QCGateList gl_existing = ExistingMethod::translate(ctx);
+        result.num_qubits_existing = gl_existing.num_qubits;
+        result.t_count_existing = countTgates(gl_existing);
+        result.passed &= (gl_existing.num_pis > 0 && !gl_existing.gates.empty());
+        gl_existing.gates.clear();  // Explicit memory cleanup
+      }
 
       // Proposed method
-      QCGateList gl_proposed = ProposedMethod::translate(ctx);
-      result.num_qubits_proposed = gl_proposed.num_qubits;
-      result.t_count_proposed = countTgates(gl_proposed);
-      result.passed &= (gl_proposed.num_pis > 0 && !gl_proposed.gates.empty());
+      {
+        QCGateList gl_proposed = ProposedMethod::translate(ctx);
+        result.num_qubits_proposed = gl_proposed.num_qubits;
+        result.t_count_proposed = countTgates(gl_proposed);
+        result.passed &= (gl_proposed.num_pis > 0 && !gl_proposed.gates.empty());
+        gl_proposed.gates.clear();  // Explicit memory cleanup
+      }
 
     } catch (const std::exception &e) {
       llvm::errs() << "[EPFLBenchmark] " << c.name << ": SYNTH ERROR — "
