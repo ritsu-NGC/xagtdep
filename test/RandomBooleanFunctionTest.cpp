@@ -4,11 +4,15 @@
 
 #include "BennettSequence.h"
 #include "PebblingMethod.h"
-#include "ProposedMethod.h"
 #include "QCGateList.h"
 #include "RandomXAG.h"
 #include "XagContext.h"
 #include "llvm/Support/raw_ostream.h"
+#include <caterpillar/details/utils.hpp>
+#include <caterpillar/structures/stg_gate.hpp>
+#include <caterpillar/synthesis/lhrs.hpp>
+#include <caterpillar/synthesis/strategies/xag_mapping_strategy.hpp>
+#include <tweedledum/networks/netlist.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -274,13 +278,19 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     bennett_ctx.optimized = true;
     QCGateList bennett_gl = PebblingMethod::translate(bennett_ctx, bennett);
 
-    XagContext caterpillar_ctx;
-    caterpillar_ctx.xag = xag;
-    caterpillar_ctx.optimized = true;
-    QCGateList caterpillar_gl = ProposedMethod::translate(caterpillar_ctx);
+    tweedledum::netlist<caterpillar::stg_gate> qnet;
+    caterpillar::logic_network_synthesis_params cat_ps;
+    caterpillar::logic_network_synthesis_stats cat_st;
+    caterpillar::xag_mapping_strategy cat_strategy;
+    caterpillar::logic_network_synthesis(qnet, xag, cat_strategy, {}, cat_ps,
+                                         &cat_st);
+    auto [cnot_count, cat_t_count, cat_t_depth] =
+        caterpillar::detail::qc_stats(qnet, false);
+    (void)cnot_count;
+    (void)cat_t_depth;
 
     row.bennett_t_count = countTgates(bennett_gl);
-    row.caterpillar_t_count = countTgates(caterpillar_gl);
+    row.caterpillar_t_count = cat_t_count;
     row.difference = static_cast<int>(row.bennett_t_count) -
                      static_cast<int>(row.caterpillar_t_count);
 
@@ -299,7 +309,7 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
   notes.push_back("and_pebbles=" + std::to_string(and_pebbles));
   notes.push_back("attempts=" + std::to_string(attempts_used));
   notes.push_back(success ? "selection=success" : "selection=exhausted");
-  notes.push_back("caterpillar_path=ProposedMethod");
+  notes.push_back("caterpillar_path=logic_network_synthesis");
   if (!success) {
     row.bennett_t_count = 0;
     row.caterpillar_t_count = 0;
