@@ -4,16 +4,12 @@
 
 #include "BennettSequence.h"
 #include "PebblingMethod.h"
+#include "ProposedMethod.h"
 #include "QCGateList.h"
 #include "RandomXAG.h"
+#include "SequenceJson.h"
 #include "XagContext.h"
 #include "llvm/Support/raw_ostream.h"
-#include <caterpillar/details/utils.hpp>
-#include <caterpillar/structures/stg_gate.hpp>
-#include <caterpillar/synthesis/lhrs.hpp>
-#include <caterpillar/synthesis/strategies/xag_mapping_strategy.hpp>
-#include <tweedledum/gates/gate_set.hpp>
-#include <tweedledum/networks/netlist.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -22,7 +18,6 @@
 #include <map>
 #include <sstream>
 #include <string>
-#include <sys/stat.h>
 #include <vector>
 
 using namespace llvm;
@@ -67,17 +62,16 @@ struct SummaryStats {
 
 static void printUsage() {
   errs() << "Usage: RandomBooleanFunctionTest [OPTIONS]\n"
-            "  Without --qubit-count: tests qubit counts 5 through 8.\n"
-            "  With --qubit-count <N>: tests only that qubit count.\n\n"
-            "Options:\n"
-            "  --qubit-count <N>   number of input qubits / PIs (range: 5-12)\n"
-            "  --num-functions <N> random functions per qubit count (default: 10)\n"
-            "  --seed <N>          base seed for reproducibility (default: 0xcafeaffe)\n"
-            "  --output-csv <P>    CSV output path (default: random_bool_test.csv)\n"
-            "  --output-latex <P>  LaTeX output path (default: random_bool_test.tex)\n"
-            "  --circuits-dir <P>  directory for per-function circuit JSON files "
-            "(default: random_bool_circuits)\n"
-            "  -h, --help          print this help\n";
+             "  Without --qubit-count: tests qubit counts 5 through 8.\n"
+             "  With --qubit-count <N>: tests only that qubit count.\n\n"
+             "Options:\n"
+             "  --qubit-count <N>   number of input qubits / PIs (range: 5-12)\n"
+             "  --num-functions <N> random functions per qubit count (default: 10)\n"
+             "  --seed <N>          base seed for reproducibility (default: 0xcafeaffe)\n"
+             "  --output-csv <P>    CSV output path (default: random_bool_test.csv)\n"
+             "  --output-latex <P>  LaTeX output path (default: random_bool_test.tex)\n"
+             "  --circuits-dir <P>  circuits output dir (default: random_bool_circuits)\n"
+             "  -h, --help          print this help\n";
 }
 
 static bool parseUnsigned(const char *text, uint64_t &out) {
@@ -257,65 +251,66 @@ static bool writeLatex(const std::string &path,
   return out.good();
 }
 
-static bool ensureDir(const std::string &path) {
-  // Create all path components recursively.
-  for (size_t pos = 1; pos <= path.size(); ++pos) {
-    if (pos == path.size() || path[pos] == '/') {
-      std::string sub = path.substr(0, pos);
-      if (mkdir(sub.c_str(), 0755) != 0 && errno != EEXIST)
-        return false;
-    }
-  }
-  return true;
-}
+static bool writeCircuits(const std::string &circuits_dir, uint32_t qubits,
+                          uint32_t function_id,
+                          const mockturtle::xag_network &xag,
+                          const QCGateList &bennett_gl,
+                          const QCGateList &caterpillar_gl) {
+  // Build filenames
+  std::string xag_file = circuits_dir + "/circuit_q" + std::to_string(qubits) +
+                         "_f" + std::to_string(function_id) + "_xag.json";
+  std::string bennett_file = circuits_dir + "/circuit_q" + std::to_string(qubits) +
+                             "_f" + std::to_string(function_id) + "_bennett.json";
+  std::string caterpillar_file =
+      circuits_dir + "/circuit_q" + std::to_string(qubits) + "_f" +
+      std::to_string(function_id) + "_caterpillar.json";
 
-static std::string
-caterpillarNetlistToJSON(const tweedledum::netlist<caterpillar::stg_gate> &qnet) {
-  std::string json =
-      "{\"num_qubits\":" + std::to_string(qnet.num_qubits()) + ",\"gates\":[";
-  bool first = true;
-  qnet.foreach_cgate([&](auto &cgate) {
-    if (!first)
-      json += ",";
-    first = false;
-
-    const auto &gate = cgate.gate;
-    const char *type_str = "unknown";
-    auto op = gate.operation();
-    if (op == tweedledum::gate_set::t)
-      type_str = "t";
-    else if (op == tweedledum::gate_set::t_dagger)
-      type_str = "tdg";
-    else if (op == tweedledum::gate_set::pauli_x)
-      type_str = "x";
-    else if (op == tweedledum::gate_set::cx)
-      type_str = "cx";
-    else if (op == tweedledum::gate_set::mcx)
-      type_str = "ccx";
-    else if (op == tweedledum::gate_set::hadamard)
-      type_str = "h";
-
-    json += std::string("{\"type\":\"") + type_str + "\",\"controls\":[";
-    bool first_ctrl = true;
-    gate.foreach_control([&](auto c) {
-      if (!first_ctrl)
-        json += ",";
-      first_ctrl = false;
-      json += std::to_string(c.index());
-    });
-    json += "],\"target\":" +
-            std::to_string(gate.targets()[0].index()) + "}";
-  });
-  json += "]}";
-  return json;
-}
-
-static bool writeCircuit(const std::string &path, const std::string &json) {
-  std::ofstream f(path);
-  if (!f.is_open())
+  // Write XAG structure
+  try {
+    std::string xag_json = xagStructureToJSON(xag);
+    std::ofstream xag_out(xag_file);
+    if (!xag_out)
+      return false;
+    xag_out << xag_json;
+    if (!xag_out.good())
+      return false;
+  } catch (const std::exception &e) {
+    errs() << "Failed to write XAG file " << xag_file << ": " << e.what()
+           << "\n";
     return false;
-  f << json;
-  return f.good();
+  }
+
+  // Write Bennett circuit
+  try {
+    std::string bennett_json = bennett_gl.toJSON();
+    std::ofstream bennett_out(bennett_file);
+    if (!bennett_out)
+      return false;
+    bennett_out << bennett_json;
+    if (!bennett_out.good())
+      return false;
+  } catch (const std::exception &e) {
+    errs() << "Failed to write Bennett file " << bennett_file << ": "
+           << e.what() << "\n";
+    return false;
+  }
+
+  // Write Caterpillar circuit
+  try {
+    std::string caterpillar_json = caterpillar_gl.toJSON();
+    std::ofstream caterpillar_out(caterpillar_file);
+    if (!caterpillar_out)
+      return false;
+    caterpillar_out << caterpillar_json;
+    if (!caterpillar_out.good())
+      return false;
+  } catch (const std::exception &e) {
+    errs() << "Failed to write Caterpillar file " << caterpillar_file << ": "
+           << e.what() << "\n";
+    return false;
+  }
+
+  return true;
 }
 
 static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_seed,
@@ -328,8 +323,9 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
   bool success = false;
   uint32_t and_pebbles = 0;
   size_t bennett_steps = 0;
-  QCGateList final_bennett_gl;
-  tweedledum::netlist<caterpillar::stg_gate> final_qnet;
+  mockturtle::xag_network xag;
+  QCGateList bennett_gl;
+  QCGateList caterpillar_gl;
 
   for (; attempt < 32; ++attempt) {
     row.seed = mixSeed(base_seed, qubits, function_id * 32u + attempt);
@@ -340,7 +336,7 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     params.num_xor_gates = std::max<uint32_t>(1, qubits / 2);
     params.seed = row.seed;
 
-    auto xag = generate_random_xag(params);
+    xag = generate_random_xag(params);
     constraint_ok = validate_and_constraint(xag);
 
     PebblingSequence bennett = BennettSequence::build(xag);
@@ -350,28 +346,20 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     XagContext bennett_ctx;
     bennett_ctx.xag = xag;
     bennett_ctx.optimized = true;
-    QCGateList bennett_gl = PebblingMethod::translate(bennett_ctx, bennett);
+    bennett_gl = PebblingMethod::translate(bennett_ctx, bennett);
 
-    tweedledum::netlist<caterpillar::stg_gate> qnet;
-    caterpillar::logic_network_synthesis_params cat_ps;
-    caterpillar::logic_network_synthesis_stats cat_st;
-    caterpillar::xag_mapping_strategy cat_strategy;
-    caterpillar::logic_network_synthesis(qnet, xag, cat_strategy, {}, cat_ps,
-                                         &cat_st);
-    auto [cnot_count, cat_t_count, cat_t_depth] =
-        caterpillar::detail::qc_stats(qnet, false);
-    (void)cnot_count;
-    (void)cat_t_depth;
+    XagContext caterpillar_ctx;
+    caterpillar_ctx.xag = xag;
+    caterpillar_ctx.optimized = true;
+    caterpillar_gl = ProposedMethod::translate(caterpillar_ctx);
 
     row.bennett_t_count = countTgates(bennett_gl);
-    row.caterpillar_t_count = cat_t_count;
+    row.caterpillar_t_count = countTgates(caterpillar_gl);
     row.difference = static_cast<int>(row.bennett_t_count) -
                      static_cast<int>(row.caterpillar_t_count);
 
     if (constraint_ok && and_pebbles > 0 && row.bennett_t_count > 0 &&
         row.caterpillar_t_count > 0) {
-      final_bennett_gl = std::move(bennett_gl);
-      final_qnet = std::move(qnet);
       success = true;
       break;
     }
@@ -385,8 +373,18 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
   notes.push_back("and_pebbles=" + std::to_string(and_pebbles));
   notes.push_back("attempts=" + std::to_string(attempts_used));
   notes.push_back(success ? "selection=success" : "selection=exhausted");
-  notes.push_back("caterpillar_path=logic_network_synthesis");
-  if (!success) {
+  notes.push_back("caterpillar_path=ProposedMethod");
+  
+  if (success) {
+    // Write circuit files
+    if (!writeCircuits(circuits_dir, qubits, function_id, xag, bennett_gl,
+                       caterpillar_gl)) {
+      notes.push_back("circuit_write_failed");
+      success = false;
+    } else {
+      notes.push_back("circuits_written");
+    }
+  } else {
     row.bennett_t_count = 0;
     row.caterpillar_t_count = 0;
     row.difference = 0;
@@ -397,14 +395,6 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     if (i)
       row.notes += "; ";
     row.notes += notes[i];
-  }
-
-  if (success && !circuits_dir.empty()) {
-    std::string base = circuits_dir + "/circuit_q" + std::to_string(qubits) +
-                       "_f" + std::to_string(function_id);
-    writeCircuit(base + "_bennett.json", final_bennett_gl.toJSON());
-    writeCircuit(base + "_caterpillar.json",
-                 caterpillarNetlistToJSON(final_qnet));
   }
 
   row.passed = success;
@@ -431,6 +421,13 @@ int main(int argc, char **argv) {
     qubit_counts = {5, 6, 7, 8};
   }
 
+  // Create circuits directory
+  int mkdir_result = mkdir(args.circuits_dir.c_str(), 0755);
+  if (mkdir_result != 0 && errno != EEXIST) {
+    errs() << "Failed to create circuits directory: " << args.circuits_dir << "\n";
+    return 2;
+  }
+
   errs() << "=== Random Boolean Function Test ===\n";
   errs() << "Qubit counts:";
   for (uint32_t q : qubit_counts)
@@ -439,12 +436,7 @@ int main(int argc, char **argv) {
          << "Base seed: " << args.seed << "\n"
          << "CSV output: " << args.output_csv << "\n"
          << "LaTeX output: " << args.output_latex << "\n"
-         << "Circuits dir: " << args.circuits_dir << "\n\n";
-
-  if (!ensureDir(args.circuits_dir)) {
-    errs() << "Failed to create circuits directory: " << args.circuits_dir << "\n";
-    return 2;
-  }
+         << "Circuits directory: " << args.circuits_dir << "\n\n";
 
   errs() << "qubits | function | seed               | Bennett T | Caterpillar T | "
             "Diff | Notes\n";
@@ -518,7 +510,7 @@ int main(int argc, char **argv) {
 
   errs() << "\nWrote CSV report to " << args.output_csv << "\n";
   errs() << "Wrote LaTeX table to " << args.output_latex << "\n";
-  errs() << "Circuit JSON output directory: " << args.circuits_dir << "/\n";
+  errs() << "Wrote circuits to " << args.circuits_dir << "/\n";
   errs() << (all_pass ? "RandomBooleanFunctionTest PASSED\n"
                       : "RandomBooleanFunctionTest FAILED\n");
   return all_pass ? 0 : 1;
