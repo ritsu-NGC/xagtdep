@@ -20,6 +20,11 @@
 #include <string>
 #include <vector>
 
+// Caterpillar headers
+#include <caterpillar/caterpillar.hpp>
+#include <mockturtle/networks/xag.hpp>
+#include <tweedledum/networks/netlist.hpp>
+
 using namespace llvm;
 using namespace xagtdep;
 
@@ -313,6 +318,58 @@ static bool writeCircuits(const std::string &circuits_dir, uint32_t qubits,
   return true;
 }
 
+// Helper function to convert caterpillar stg_gate circuit to QCGateList
+static QCGateList convertCaterpillarCircuit(
+    const tweedledum::netlist<caterpillar::stg_gate> &circ) {
+  QCGateList result;
+  result.num_qubits = circ.num_qubits();
+  result.num_pis = circ.num_qubits(); // Approximate; caterpillar doesn't directly expose num_pis
+  result.num_ancillas = 0;
+  result.output_qubit = 0;
+
+  for (const auto &gate : circ) {
+    GateOp op;
+    // Map caterpillar gate types to xagtdep GateType
+    switch (gate.operation) {
+    case caterpillar::stg_gate::Op::X:
+      op.type = GateType::X;
+      break;
+    case caterpillar::stg_gate::Op::CNOT:
+      op.type = GateType::CNOT;
+      break;
+    case caterpillar::stg_gate::Op::Toffoli:
+      op.type = GateType::Toffoli;
+      break;
+    case caterpillar::stg_gate::Op::H:
+      op.type = GateType::H;
+      break;
+    case caterpillar::stg_gate::Op::T:
+      op.type = GateType::T;
+      break;
+    case caterpillar::stg_gate::Op::Tdg:
+      op.type = GateType::Tdg;
+      break;
+    default:
+      // Skip unknown gate types
+      continue;
+    }
+
+    // Extract control and target qubits
+    const auto &qubits = gate.qubits;
+    if (qubits.empty())
+      continue;
+
+    op.target = qubits.back();
+    for (size_t i = 0; i < qubits.size() - 1; ++i) {
+      op.controls.push_back(qubits[i]);
+    }
+
+    result.gates.push_back(op);
+  }
+
+  return result;
+}
+
 static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_seed,
                         const std::string &circuits_dir) {
   ResultRow row;
@@ -348,10 +405,11 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
     bennett_ctx.optimized = true;
     bennett_gl = PebblingMethod::translate(bennett_ctx, bennett);
 
-    XagContext caterpillar_ctx;
-    caterpillar_ctx.xag = xag;
-    caterpillar_ctx.optimized = true;
-    caterpillar_gl = ProposedMethod::translate(caterpillar_ctx);
+    // Use caterpillar::logic_network_synthesis instead of ProposedMethod::translate
+    tweedledum::netlist<caterpillar::stg_gate> circ;
+    caterpillar::xag_mapping_strategy strategy;
+    caterpillar::logic_network_synthesis(circ, xag, strategy);
+    caterpillar_gl = convertCaterpillarCircuit(circ);
 
     row.bennett_t_count = countTgates(bennett_gl);
     row.caterpillar_t_count = countTgates(caterpillar_gl);
@@ -373,8 +431,8 @@ static ResultRow runOne(uint32_t qubits, uint32_t function_id, uint64_t base_see
   notes.push_back("and_pebbles=" + std::to_string(and_pebbles));
   notes.push_back("attempts=" + std::to_string(attempts_used));
   notes.push_back(success ? "selection=success" : "selection=exhausted");
-  notes.push_back("caterpillar_path=ProposedMethod");
-  
+  notes.push_back("caterpillar_path=caterpillar::logic_network_synthesis");
+
   if (success) {
     // Write circuit files
     if (!writeCircuits(circuits_dir, qubits, function_id, xag, bennett_gl,
