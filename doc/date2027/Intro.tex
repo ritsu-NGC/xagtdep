@@ -1,0 +1,92 @@
+\section{Introduction}
+\label{Intro}
+
+Logic network based quantum circuit techniques such as LUT-based Hierarchical Reversible
+Synthesis (LHRS)~\cite{bib-lhrs-soeken} and \emph{caterpillar}~\cite{bib-meuli-ros}, which
+uses XOR-AND-Inverter graphs (XAG) to represent the Boolean functions. XAG based methods
+in particular have a range of techniques to optimize the generated quantum circuit for
+T-count, which is the number of T-gates in a quantum circuit, and T-depth, which is the
+largest such chain of T-gates in a quantum circuit. These metrics are important to fault
+tolerant quantum computing because T-gates have an outsize implementation cost compared
+to other gates~\cite{bib-bravyi-kitaev-magic-distillation}. In XAGs, T-depth can be
+analogized to AND operations, which are often implemented using other three qubit
+non-Clifford gates such as the Toffoli gate and the three qubit controlled-Z gate.
+Therefore existing methods to optimize them for AND nodes~\cite{bib-meuli-mult} and
+AND-depth\cite{bib-meuli-ros}, which obliquely optimize for T-count and T-depth
+respectively.
+
+Existing methods, however, largely use single-target gates acting on clean ancilla,
+and are required to be both initialized to $\ket{0}$ and returned to the value at the end
+of the calculation. Multiple Control Toffoli (MCT) gates can be decomposed with linear cost
+using such ancilla. We can model such a decomposition as an XAG, one of two-input ANDs
+chained together. In a similar way, we can also decompose the MCT using \emph{dirty ancilla},
+which have no requirements on its initial value. Using dirty ancilla means the circuit
+can use any of the other qubits that are presently being used by other subccircuits as
+scratch space. This reduces the need for adding clean ancilla towards the total T-count.
+In the standard formulation, dirty ancilla decompositions have higher T-count than the
+clean ancilla decompositions. Some work optimizes these using a \emph{relative phase},
+or a phase on the output that is input dependent, but there remains a linear separation
+between the two.
+
+In this work, we derive a way to generate XAG using dirty ancilla, inspired by the dirty
+ancilla MCT decomposition. We then use relative phase to further reduce the T-count of
+our decomposition, and demonstrate that it is only separated by a T-count equal to the
+number of output qubits. This implies that a clean ancilla and dirty ancilla MCT
+decomposition only differs by a single T-gate. We conduct several experiments on
+EPFL benchmarks to demonstrate this.
+
+This paper is structured as follows. In~\secref{Pre}, we first introduce preliminary
+knowledge to understand our proposals, including XAG quantum circuit synthesis and
+relative phase. We then present our proposal in~\secref{Pro}, including the dirty
+ancilla XAG synthesis, and its implications with MCT decomposition. Finally, \secref{Conc}
+concludes with our conclusions and future work.
+
+
+
+
+%% Multiple Control Toffoli (MCT) gates are important components to quantum computing. They
+%% allow non-trivial non-Clifford entanglements, which serve as building blocks to quantum
+%% algorithms which demonstrate quantum advantage.
+
+%% The canonical Toffoli gate has two control bits and a target bit. It implements the Pauli X
+%% operation on its target bit when both of its input qubits are 1. A Toffoli gate is not a
+%% gate that can be implemented directly; it is often decomposed into the Clifford+T basis
+%% gate set. For fault tolerant computing, the T-gate dominates the implementation cost.
+%% Thus, T-count, or the number of T-gates and T$^{\dagger}$-gates in a circuit, is a metric
+%% that is often targeted in optimization
+
+%% An MCT gate generalizes the Toffoli gate to multiple control bits. In general, implementing
+%% the MCT gate using only the Clifford+T basis gate set without any additional bits takes
+%% a T-count that is at best quadratic in the control bits~\cite{bib-barenco-elementary}.
+%% However, when ancilla bits are employed, the MCT gates can be decomposed using a linear
+%% number of Toffoli gates, and therefore a linear T-count~\cite{bib-barenco-elementary,bib-mike-and-ike}.
+%% The methods differ whether the ancilla used are {\it clean ancilla}, which are initialized to $\ket{0}$,
+%% or {\it dirty ancilla}, which have no requirements on initial values. Dirty ancilla decompositions
+%% are important because they make possible implementations that simply use existing qubits
+%% for ancilla, obviating the need to add qubits initialized to $\ket{0}$.
+
+%% Decomposing MCT gates using clean ancilla typically requires a smaller T-count than decomposing
+%% using dirty ancilla. In the canonical Barenco et al. formulation, the dirty ancilla decomposition
+%% takes almost twice the number of Toffoli as a clean ancilla decomposition, implying a T-count
+%% of the same scale. Successive results such as Maslov~\cite{bib-maslov-rtof} brought implied that
+%% a T-count less than seven multiplied by the number of Toffoli gates is needed, by using
+%% {\it relative phase} constructions. Other results by Abdessaieh et al~\cite{bib-abdessaied-mct}
+%% close the gap between the clean ancilla and dirty ancilla decompositions by employing further
+%% relative phase style constructions. However, this still has a separation in cost that is
+%% linear.
+
+%% In this work, we demonstrate that, by exploiting further relative phase opportunities, clean ancilla
+%% and dirty ancilla decompositions have costs that are separated by a constant amount, that being a
+%% single T-gate. This decreases the opportunity cost of using the the dirty ancilla decomposition. We
+%% use it in this work to improve existing constructions that use the dirty ancilla construction,
+%% including the linear cost, single dirty ancilla decomposition by Zindorf and
+%% Bose~\cite{bib-zindorf-mct}. We obtain new cost calculations for such decompositions. We summarize
+%% the existing state of the art of MCT decompositions in the last chapter.
+
+%% Dctodo
+%% This paper is structured as follows: \secref{Pre} goes into the necessary preliminary for this
+%% work, including relative phase constructions. \secref{MCT} goes into best known methods of MCT
+%% decomposition, many of them using relative phase constructions. \secref{Pro} describes how we
+%% derive our proposed dirty ancilla decomposition. \secref{App} shows our application of this
+%% proposal to existing methods. \secref{Conc} concludes the paper with our takeaways and possible
+%% future research paths.
