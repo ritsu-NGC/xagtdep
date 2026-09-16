@@ -19,6 +19,13 @@ Also includes:
   - `build_gate_groups_by_rules` : traverses PI->PO paths and groups nodes
                                    into clean/dirty/xor "gates" per a set
                                    of custom rules.
+  - `merge_gates_on_shared_xor_nodes`
+                                 : merges gate subgraphs that share a common
+                                   XOR node (post-processing; avoids duplicate
+                                   gate definitions caused by multiple path
+                                   convergences).
+  - `build_gate_groups`          : wrapper that runs raw traversal then
+                                   merges overlapping XOR-based subgraphs.
   - `print_gate_node_groups`     : prints each gate as a single combined
                                    list of its nodes.
   - `GatePebbleSolver`/`pebble_gates`
@@ -53,6 +60,22 @@ also always widened (if needed) to be at least the requested starting
 `pebbles`/`max_pebbles` value, so the solver is guaranteed to attempt
 what you asked for at a minimum.
 
+Note on the minimum required pebbles vs. number of POs: since every
+primary output (PO) must remain pebbled simultaneously at the very end
+of the pebbling game, `pebbles`/`max_pebbles` can never be less than
+`len(net.pos)` -- anything smaller is guaranteed infeasible. `pebble()`,
+`build_gate_groups_by_rules()`, and `find_min_pebbles()` all validate
+this up front (raising `ValueError`, or in `find_min_pebbles`'s case,
+silently widening the search range to start at `len(net.pos)`).
+
+Because `random_dag` now makes every sink node a PO (see below), the
+number of POs on a given random network is data-dependent and can vary
+run to run. The demo below computes a per-network effective pebble
+limit (`max(pebble_limit, len(rnd_net.pos))`) for the random-DAG
+examples, so a user-requested `--max-pebbles` that happens to be
+smaller than that network's PO count is automatically widened rather
+than raising `ValueError`.
+
 `pebble()` and `pebble_gates()` default to `auto_increase_pebbles=True`:
 if the requested pebble count turns out to be infeasible (stays unsat
 through the step cap), they automatically retry with one more pebble,
@@ -66,11 +89,62 @@ room for both compute and uncompute steps on every node, while avoiding
 an unbounded runaway search. Pass `max_steps=None` for a fully unbounded
 per-attempt search, or an explicit integer for a custom cap.
 
+Gate-group construction design (`build_gate_groups_by_rules` /
+`merge_gates_on_shared_xor_nodes` / `build_gate_groups`):
+
+Raw traversal (`build_gate_groups_by_rules`) walks every PI->PO path and
+builds gate fragments according to these rules:
+
+  - Primary inputs (PIs) are always available and never need to be
+    pebbled or uncomputed. They are skipped entirely -- no bookkeeping,
+    no gate boundary change.
+  - XOR nodes are recorded in `xor_nodes` (no ancilla/pebble bookkeeping
+    needed) and do NOT finalize the gate.
+  - Rule 1 (primary output): the node is a network output and therefore
+    never needs to be uncomputed. Adds the node to `clean_pebble`,
+    FINALIZES the gate, and stops traversal of this path.
+  - Pebble-limit rule: fires when `cur_pebble == max_pebbles - 1`. Adds
+    the node to `clean_pebble`, FINALIZES the gate, resets `cur_pebble`,
+    and continues traversal of this path in a fresh gate.
+  - Rule 3: fires when the node feeds a two-input AND gate whose OTHER
+    fanin is itself an intermediate (non-PI) node, and this node has not
+    already been visited. Adds the node to `clean_pebble` (it must still
+    be uncomputed later -- enforced by the underlying Z3 solver, not the
+    grouping itself), FINALIZES the gate, and stops traversal of this
+    path. If the node HAS already been visited, this rule is skipped and
+    traversal simply advances to the next node in the path.
+  - Rule 4 (ordinary dirty pebble): the fallback case. Adds the node to
+    `dirty_pebble` and increments `cur_pebble`, but does NOT finalize the
+    gate -- traversal keeps accumulating into the same gate.
+
+Because a DAG node can be reached by more than one PI->PO path (fanout
+> 1), raw traversal can produce multiple gate fragments that describe
+overlapping parts of the same underlying subgraph -- this is a normal
+consequence of a converging DAG, not an error. Rather than trying to
+prevent this during traversal, `merge_gates_on_shared_xor_nodes` is run
+as a post-processing step: any two raw gate fragments that share a
+common XOR node are merged (via union-find, transitively) into a single
+combined gate. `build_gate_groups` is the recommended entry point that
+runs both steps together.
+
+Note on `random_dag` and primary output (PO) selection: POs are set to
+EVERY "sink" node in the generated DAG -- i.e. every node that is not
+used as a fanin by any other node -- rather than a random sample of
+`num_pos` nodes. This guarantees that every node in the network is an
+ancestor of at least one PO (since a node's forward chain in a DAG must
+terminate at some sink), so path-based traversal (e.g.
+`_enumerate_paths`/`build_gate_groups_by_rules`) is guaranteed to visit
+every node in the network, not just the fanin cone of a single
+arbitrarily-chosen output.
+
 Command-line usage:
     python pebbling_solver.py [--max-pebbles N] [--max-steps auto|none|N]
 
   --max-pebbles N   Starting pebble count to try for the pebbling
-                     examples (default: 3). Auto-escalates if infeasible.
+                     examples (default: 5). Auto-escalates if infeasible.
+                     For the random-DAG examples, this is automatically
+                     widened (if needed) to at least the number of POs
+                     in the generated network.
   --max-steps V      Step cap for the solver: an integer, 'auto'
                      (default, = 4 * number of nodes/gates), or 'none'
                      for unbounded search per pebble-count attempt.
@@ -164,8 +238,18 @@ def random_dag(num_pis=4, num_gates=6, max_fanin=2, num_pos=1, seed=None, xor_pr
     - `max_fanin`: max number of fanins per gate (fanins are chosen from
                    any previously created node, PI or gate, guaranteeing
                    a valid topological / acyclic ordering).
-    - `num_pos`: number of primary outputs, chosen from the last-created
-                 gates (falls back to PIs if there aren't enough gates).
+    - `num_pos`: kept for backward compatibility but no longer used to
+                 sample POs randomly. Instead, POs are set to EVERY
+                 "sink" node -- i.e. every node that is not used as a
+                 fanin by any other node. This guarantees that every
+                 node in the network is an ancestor of at least one PO
+                 (since a node's forward chain in a DAG must terminate
+                 at some sink), so path-based traversal (e.g.
+                 `build_gate_groups_by_rules`) will visit every node.
+                 Because of this, the NUMBER of POs produced is
+                 data-dependent -- callers should not assume it equals
+                 `num_pos` and should size `max_pebbles`/`pebbles`
+                 relative to `len(net.pos)` after generation.
     - `seed`: optional random seed for reproducibility.
     - `xor_prob`: probability that a given gate is created as an XOR node
                   instead of an AND-like node.
@@ -185,12 +269,21 @@ def random_dag(num_pis=4, num_gates=6, max_fanin=2, num_pos=1, seed=None, xor_pr
         is_xor = random.random() < xor_prob
         net.create_gate(fanins, name=f"n{i}", is_xor=is_xor)
 
-    # pick POs preferentially from gates (most "interesting" outputs),
-    # falling back to PIs if there aren't enough gates
-    candidates = [n for n in net.nodes if not n.is_pi] or net.nodes
-    num_pos = min(num_pos, len(candidates))
-    po_nodes = random.sample(candidates, num_pos)
-    for n in po_nodes:
+    # Every "sink" node (a node that is not consumed as a fanin by any
+    # other node) becomes a PO. This guarantees every node in the
+    # network is an ancestor of some PO -- otherwise its forward chain
+    # would have to terminate at a node that isn't a sink, which is a
+    # contradiction. PIs that happen to be sinks (unused entirely) are
+    # excluded, since a bare, unconnected PI as a PO isn't meaningful
+    # for the pebbling game.
+    children = net.build_children()
+    sink_nodes = [n for n in net.nodes if not n.is_pi and not children.get(n)]
+    if not sink_nodes:
+        # Degenerate case (e.g. num_gates == 0): fall back to the last
+        # created node, if any, so the network still has a PO.
+        non_pi_nodes = [n for n in net.nodes if not n.is_pi]
+        sink_nodes = non_pi_nodes[-1:] or net.nodes[-1:]
+    for n in sink_nodes:
         net.create_po(n)
 
     return net
@@ -459,7 +552,18 @@ def pebble(net: PebblingNetwork, pebbles: int, max_steps="auto", verbose=True,
 
     Use `find_min_pebbles` if you want to explicitly search for the
     minimum feasible pebble count starting from some `start` value.
+
+    Raises `ValueError` if `pebbles < len(net.pos)`, since all primary
+    outputs must remain pebbled simultaneously at the end -- anything
+    smaller is guaranteed infeasible.
     """
+    if pebbles < len(net.pos):
+        raise ValueError(
+            f"pebbles={pebbles} is less than the number of primary "
+            f"outputs ({len(net.pos)}). All POs must remain pebbled "
+            f"simultaneously at the end, so pebbles must be >= len(net.pos)."
+        )
+
     if max_pebbles_cap is None:
         max_pebbles_cap = max(1, len(net.nodes))
     # never let the cap be smaller than the requested starting point --
@@ -522,6 +626,12 @@ def find_min_pebbles(net: PebblingNetwork, start=1, max_pebbles=None, max_steps=
       - None: no cap -- keeps adding steps indefinitely until satisfiable.
       - int: an explicit step cap.
 
+    Since all primary outputs must remain pebbled simultaneously at the
+    end, any pebble count below `len(net.pos)` is guaranteed infeasible.
+    Both `start` and `max_pebbles` are silently widened (if needed) to be
+    at least `len(net.pos)`, so the search never wastes time on
+    guaranteed-infeasible pebble counts.
+
     Returns (pebbles_used, steps). Raises `RuntimeError` if nothing up to
     `max_pebbles` works.
     """
@@ -532,6 +642,12 @@ def find_min_pebbles(net: PebblingNetwork, start=1, max_pebbles=None, max_steps=
         max_pebbles = max(1, len(net.nodes))
     # never let the cap be smaller than the requested starting point
     max_pebbles = max(max_pebbles, start)
+    # never let the cap be smaller than the number of POs either -- all
+    # POs must remain pebbled simultaneously at the end
+    max_pebbles = max(max_pebbles, len(net.pos))
+    # and never let the starting point search below the PO count, since
+    # anything less is guaranteed infeasible
+    start = max(start, len(net.pos))
 
     p = start
     while p <= max_pebbles:
@@ -652,27 +768,36 @@ def _enumerate_paths(net: PebblingNetwork):
 
 def build_gate_groups_by_rules(net: PebblingNetwork, max_pebbles: int):
     """
-    Implements a rule set while traversing every PI->PO path.
-    XOR-aware version:
+    Builds raw gate fragments by traversing every PI->PO path.
 
-      - XOR nodes bypass clean/dirty pebble accounting entirely (they map
-        to Rule 5's simple CNOT cascade and need no ancilla), but are still
-        recorded so gate grouping/gadget generation can see them.
-      - "outputs to a node with two fanins" only counts AND-type children,
-        since XOR fanouts don't trigger the same ancilla-management gadget.
-      - dependency flag is still tracked for both AND and XOR nodes.
+    Gate boundaries (finalize the current gate and start a new one):
+      - Rule 1: node is a primary output.
+      - Rule 3: node feeds a two-input AND whose OTHER fanin is itself
+        an intermediate (non-PI) node, and this node has not yet been
+        visited.
+      - Pebble-limit rule: cur_pebble == max_pebbles - 1.
 
-    Rules implemented:
-      - output node -> add to clean_pebble and terminate this path
-      - if cur_pebble == max_pebbles - 2:
-          add node to clean_pebble, finalize current gate,
-          start new gate, reset cur_pebble=0, continue
-      - if node feeds an AND node with two fanins:
-          if not visited -> add to clean_pebble and terminate path
-          else continue
-      - otherwise -> add node to dirty_pebble, cur_pebble += 1
-      - XOR node -> record directly (no dirty/clean bookkeeping), continue
+    Rule 4 (ordinary dirty pebble) does NOT finalize the gate -- it just
+    appends the node to dirty_pebble and increments cur_pebble; traversal
+    continues accumulating into the same gate.
+
+    Primary inputs are always available and are never included in a gate.
+    XOR nodes are recorded but do not consume pebble capacity and do not
+    finalize the gate. The raw fragments are later merged by
+    `merge_gates_on_shared_xor_nodes()`.
+
+    Raises `ValueError` if `max_pebbles < len(net.pos)`, since all
+    primary outputs must remain pebbled simultaneously at the end --
+    anything smaller is guaranteed infeasible.
     """
+    if max_pebbles < len(net.pos):
+        raise ValueError(
+            f"max_pebbles={max_pebbles} is less than the number of primary "
+            f"outputs ({len(net.pos)}). All POs must remain pebbled "
+            f"simultaneously at the end, so max_pebbles must be >= "
+            f"len(net.pos)."
+        )
+
     children = net.build_children()
     paths = _enumerate_paths(net)
     visited = set()
@@ -687,32 +812,60 @@ def build_gate_groups_by_rules(net: PebblingNetwork, max_pebbles: int):
             gates.append(gate)
             gate = GateGroup(len(gates))
 
+    def _feeds_two_fanin_and_with_intermediate_fanin(node):
+        """
+        True if `node` feeds a non-XOR child with exactly two fanins,
+        where at least one of that child's OTHER fanins is itself an
+        intermediate (non-PI) node.
+        """
+        for child in children.get(node, []):
+            if child.is_xor or len(child.fanins) != 2:
+                continue
+            other_fanins = [f for f in child.fanins if f is not node]
+            if any(not f.is_pi for f in other_fanins):
+                return True
+        return False
+
     for path in paths:
         i = 0
+
         while i < len(path):
             node = path[i]
 
-            # dependency flag: node has at least one fanin from another node
-            if any(fi in net.nodes for fi in node.fanins):
+            # Dependencies belong to the gate containing the node.
+            if any(fanin in net.nodes for fanin in node.fanins):
                 gate.dependencies.add(node)
 
-            # XOR nodes: no ancilla bookkeeping, just record and move on
+            # Primary inputs are always available. They do not belong to
+            # any gate and do not consume pebble capacity.
+            if node.is_pi:
+                visited.add(node)
+                i += 1
+                continue
+
+            # XOR nodes are included in the subgraph but do not consume
+            # pebble capacity and do not finalize the gate.
             if node.is_xor and node not in net.pos:
                 gate.xor_nodes.append(node)
                 visited.add(node)
                 i += 1
                 continue
 
-            # Rule 1: output node
+            # Rule 1: primary output.
+            #
+            # A primary output remains pebbled as the final result and
+            # therefore does not need to be uncomputed.
             if node in net.pos:
                 gate.clean_pebble.append(node)
                 visited.add(node)
                 if node.is_xor:
                     gate.xor_nodes.append(node)
+                finalize_gate()
+                cur_pebble = 0
                 break
 
-            # Rule 2: near pebble limit
-            if cur_pebble == max_pebbles - 2:
+            # Pebble-limit rule: cur_pebble reached max_pebbles - 1.
+            if cur_pebble == max_pebbles - 1:
                 gate.clean_pebble.append(node)
                 visited.add(node)
                 finalize_gate()
@@ -720,21 +873,25 @@ def build_gate_groups_by_rules(net: PebblingNetwork, max_pebbles: int):
                 i += 1
                 continue
 
-            # Rule 3: if node outputs to an AND node with two fanins
-            outputs_to_two_fanin_and = any(
-                (not ch.is_xor) and len(ch.fanins) == 2
-                for ch in children.get(node, [])
-            )
-            if outputs_to_two_fanin_and:
+            # Rule 3: node feeds a two-input AND whose OTHER fanin is
+            # itself an intermediate (non-PI) node, and this node hasn't
+            # been visited yet.
+            #
+            # The node is an intermediate value, so it must eventually be
+            # uncomputed, but it terminates construction of this gate.
+            if _feeds_two_fanin_and_with_intermediate_fanin(node):
                 if node not in visited:
                     gate.clean_pebble.append(node)
                     visited.add(node)
+                    finalize_gate()
+                    cur_pebble = 0
                     break
                 else:
                     i += 1
                     continue
 
-            # Rule 4: dirty pebble
+            # Rule 4: ordinary dirty pebble. Does NOT finalize the gate --
+            # traversal continues accumulating into the same gate.
             gate.dirty_pebble.append(node)
             visited.add(node)
             cur_pebble += 1
@@ -742,6 +899,103 @@ def build_gate_groups_by_rules(net: PebblingNetwork, max_pebbles: int):
 
     finalize_gate()
     return gates
+
+
+def merge_gates_on_shared_xor_nodes(gates):
+    """
+    Post-processing step: merges gates whose node-subgraphs share one or
+    more common XOR nodes into a single combined gate.
+
+    Rationale: `build_gate_groups_by_rules` builds one gate fragment per
+    PI->PO path traversal segment. Since a DAG node can be reachable from
+    multiple paths (fanout > 1), two different path traversals can each
+    independently build a gate fragment around the same underlying XOR
+    node(s) -- producing separate GateGroup objects that are really
+    describing the same combined subgraph. Rather than special-casing
+    this during traversal, we instead let traversal proceed freely and
+    merge the resulting gates afterward: any two gates that share at
+    least one XOR node are considered part of the same combined gate.
+
+    Uses union-find over gate indices to merge transitively (if gate A
+    shares an XOR node with gate B, and gate B shares a different XOR
+    node with gate C, then A/B/C are all merged into one).
+
+    Returns a new list of GateGroup objects (renumbered by gid), each
+    with deduplicated clean_pebble/dirty_pebble/xor_nodes lists (node
+    order preserved, first-seen order wins) and a unioned dependencies
+    set.
+    """
+    n = len(gates)
+    if n == 0:
+        return []
+
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    # union any two gates that share a common XOR node
+    xor_node_to_gate_idx = {}
+    for idx, g in enumerate(gates):
+        for xn in g.xor_nodes:
+            if xn in xor_node_to_gate_idx:
+                union(idx, xor_node_to_gate_idx[xn])
+            else:
+                xor_node_to_gate_idx[xn] = idx
+
+    # bucket gate indices by their union-find root, preserving first-seen
+    # root order so gid assignment is stable/deterministic
+    root_order = []
+    buckets = defaultdict(list)
+    for idx in range(n):
+        root = find(idx)
+        if root not in buckets:
+            root_order.append(root)
+        buckets[root].append(idx)
+
+    merged_gates = []
+    for new_gid, root in enumerate(root_order):
+        merged = GateGroup(new_gid)
+        seen_clean, seen_dirty, seen_xor = set(), set(), set()
+        for idx in buckets[root]:
+            g = gates[idx]
+            for node in g.clean_pebble:
+                if node not in seen_clean:
+                    merged.clean_pebble.append(node)
+                    seen_clean.add(node)
+            for node in g.dirty_pebble:
+                if node not in seen_dirty:
+                    merged.dirty_pebble.append(node)
+                    seen_dirty.add(node)
+            for node in g.xor_nodes:
+                if node not in seen_xor:
+                    merged.xor_nodes.append(node)
+                    seen_xor.add(node)
+            merged.dependencies |= g.dependencies
+        merged_gates.append(merged)
+
+    return merged_gates
+
+
+def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
+    """
+    Convenience wrapper: runs `build_gate_groups_by_rules` (raw per-path
+    traversal) followed by `merge_gates_on_shared_xor_nodes`
+    (post-processing merge of gate fragments that share XOR nodes). This
+    is the recommended entry point for gate-group construction -- use
+    `build_gate_groups_by_rules` directly only if you specifically want
+    the raw, unmerged per-path fragments.
+    """
+    raw_gates = build_gate_groups_by_rules(net, max_pebbles)
+    return merge_gates_on_shared_xor_nodes(raw_gates)
 
 
 def display_gate_groups(gates):
@@ -1197,9 +1451,12 @@ if __name__ == "__main__":
         description="Z3-based reversible pebbling solver demo."
     )
     parser.add_argument(
-        "--max-pebbles", type=int, default=3,
+        "--max-pebbles", type=int, default=5,
         help="Starting pebble count to try for the pebbling examples "
-             "(default: 3). Auto-escalates if infeasible."
+             "(default: 5). Auto-escalates if infeasible. For the "
+             "random-DAG examples, this is automatically widened (if "
+             "needed) to at least the number of POs in the generated "
+             "network."
     )
     parser.add_argument(
         "--max-steps", type=_parse_max_steps, default="auto",
@@ -1225,6 +1482,9 @@ if __name__ == "__main__":
     print("Example 1: hand-built network")
     print("=" * 60)
 
+    print("\nDAG input:")
+    net.print_summary()
+
     steps = pebble(net, pebbles=pebble_limit, max_steps=max_steps)
     groups = group_pebbles(steps, pebble_limit)
     print_groups(groups)
@@ -1232,30 +1492,49 @@ if __name__ == "__main__":
     gadgets = generate_all_gates(net)
     print_all_gadgets(gadgets)
 
-    gates_1 = build_gate_groups_by_rules(net, max_pebbles=pebble_limit)
+    gates_1 = build_gate_groups(net, max_pebbles=pebble_limit)
     print_gate_node_groups(gates_1)
     display_gate_groups(gates_1)
 
     # --- Example 2: random DAG -------------------------------------------
+    # `random_dag` makes every sink node a PO, so the resulting PO count
+    # is data-dependent. Compute a per-network effective pebble limit
+    # that's widened (if needed) to cover however many POs this
+    # particular generated network ends up with, so a smaller
+    # user-requested --max-pebbles doesn't hit the max_pebbles >=
+    # len(net.pos) validation error.
     print("\n" + "=" * 60)
     print("Example 2: random DAG")
     print("=" * 60)
-    rnd_net = random_dag(num_pis=3, num_gates=5, max_fanin=2, num_pos=1, seed=42, xor_prob=0.4)
-    rnd_net.print_summary()
+    seed = 42
+    while True:
+        rnd_net = random_dag(num_pis=6, num_gates=16, max_fanin=2,
+                              seed=seed, xor_prob=0.4)
+        rnd_pebble_limit = max(pebble_limit, len(rnd_net.pos))
+        gates = build_gate_groups(rnd_net, max_pebbles=rnd_pebble_limit)
+        if len(gates) > 3:
+            break
+        seed += 1
 
-    steps = pebble(rnd_net, pebbles=pebble_limit, max_steps=max_steps)
-    groups = group_pebbles(steps, pebble_limit)
+    print("\nDAG input:")
+    rnd_net.print_summary()
+    if rnd_pebble_limit != pebble_limit:
+        print(f"\nNote: this network has {len(rnd_net.pos)} POs, so the "
+              f"effective pebble limit for these examples was widened "
+              f"from {pebble_limit} to {rnd_pebble_limit}.")
+
+    steps = pebble(rnd_net, pebbles=rnd_pebble_limit, max_steps=max_steps)
+    groups = group_pebbles(steps, rnd_pebble_limit)
     print_groups(groups)
 
     # --- Example 3: gate-group traversal + gate-level pebbling ----------
     print("\n" + "=" * 60)
     print("Example 3: gate-group traversal + gate-level pebbling")
     print("=" * 60)
-    gates = build_gate_groups_by_rules(rnd_net, max_pebbles=pebble_limit)
     print_gate_node_groups(gates)
     display_gate_groups(gates)
 
-    gate_steps = pebble_gates(gates, max_pebbles=pebble_limit, max_steps=max_steps)
+    gate_steps = pebble_gates(gates, max_pebbles=rnd_pebble_limit, max_steps=max_steps)
 
     # --- Example 4: auto-find minimum pebble count -----------------------
     print("\n" + "=" * 60)
@@ -1264,14 +1543,19 @@ if __name__ == "__main__":
     min_p, min_steps = find_min_pebbles(rnd_net, start=1, max_steps=max_steps, verbose=True)
 
     # --- Example 5: BLIF file --------------------------------------------
-    # Uncomment and point at a real .blif file to try this out:
+    # Uncomment and point at a real .blif file to try this out. As with
+    # the random DAG above, compute an effective pebble limit for THIS
+    # network (widened to at least len(blif_net.pos)) rather than
+    # assuming pebble_limit is sufficient.
     #
     # blif_net = read_blif("example.blif")
+    # print("\nDAG input:")
     # blif_net.print_summary()
-    # steps = pebble(blif_net, pebbles=pebble_limit, max_steps=max_steps)
-    # groups = group_pebbles(steps, pebble_limit)
+    # blif_pebble_limit = max(pebble_limit, len(blif_net.pos))
+    # steps = pebble(blif_net, pebbles=blif_pebble_limit, max_steps=max_steps)
+    # groups = group_pebbles(steps, blif_pebble_limit)
     # print_groups(groups)
-    # gates = build_gate_groups_by_rules(blif_net, max_pebbles=pebble_limit)
+    # gates = build_gate_groups(blif_net, max_pebbles=blif_pebble_limit)
     # print_gate_node_groups(gates)
     # display_gate_groups(gates)
-    # pebble_gates(gates, max_pebbles=pebble_limit, max_steps=max_steps)
+    # pebble_gates(gates, max_pebbles=blif_pebble_limit, max_steps=max_steps)
