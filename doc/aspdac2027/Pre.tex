@@ -1,0 +1,297 @@
+\begin{figure}[t]
+\centering
+\setlength{\tabcolsep}{0pt}
+\begin{tabular}{
+    p{0.48\linewidth}
+    @{\hspace{0.01\linewidth}}
+    p{0.48\linewidth}
+}
+  \hspace{-1.0cm}
+  \subfloat[X-gate]{%
+    \makebox[\linewidth][c]{\input{img/Xgate}}%
+    \label{fig-xgate}
+  }
+  &
+  \subfloat[Z-gate]{%
+    \makebox[\linewidth][c]{\input{img/Zgate}}%
+    \label{fig-zgate}
+  }
+\\[0.4em]
+\hspace{2.0cm}
+\subfloat[H-gate]{%
+    \makebox[\linewidth][c]{\input{img/Hgate}}%
+    \label{fig-hgate}
+  }
+\\[0.4em]
+\subfloat[T/T$^{\dagger}$-gate]{%
+  \makebox[\linewidth][c]{%
+    \vbox{
+      \hbox{\input{img/Tgate}}
+      \hbox{\input{img/Tdgate}}
+    }%
+  }
+  \label{fig-tgate}
+}
+&
+\subfloat[Toffoli gate]{%
+  \makebox[\linewidth][c]{\input{img/toff}}%
+  \label{fig-toff}
+}
+
+\\[0.4em]
+
+% Row 4
+\subfloat[CNOT-gate]{%
+  \makebox[\linewidth][c]{\input{img/cnot}}%
+  \label{fig-cnot}
+}
+&
+\subfloat[Controlled-Z-gate]{%
+  \makebox[\linewidth][c]{\input{img/cz}}%
+  \label{fig-cz}
+}
+\\[0.4em]
+
+\end{tabular}
+
+\caption{Quantum gates}
+\label{fig-gates}
+\end{figure}
+
+
+\section{Preliminary}
+\label{Pre}
+
+\subsection{Quantum Bits and Quantum Gates}
+\label{qubits}
+Quantum computers internally represent data as \emph{qubits}, which are quantum systems that can
+take on the quantum states $\ket{0}$ and $\ket{1}$, each known as \emph{basis states}. The
+tensor product of several basis states
+$\ket{\bar{x}}=\ket{x_0} \otimes \ket{x_1} \otimes \cdots \otimes \ket{x_{n-1}}, \bar{x} \in \{0,1\}^n$
+is known as a \emph{computational basis state}, and a general quantum state can be expressed as a
+linear combination of these computational basis states
+$\ket{\psi} = k_0\ket{0} + k_1 \ket{1} + k_{n-1} \ket(n-1), k_i = a_ie^{i{\phi}_i} \in \mathbb{C}, \sum_i{k_i * k_i^\dagger} = 1$.
+
+
+%% These computational basis states can also be in linear superposition.
+%% \begin{equation}
+%% \ket{\psi} = \sum_{\mathbf{k} \in \{0,1\}^n} \alpha_{\mathbf{k}}\ket{\mathbf{k}},
+%% \sum_{\mathbf{k} \in \{0,1\}^n} \alpha_{\mathbf{k}}^2 = 1
+%% \end{equation}
+
+{\it Quantum gates} describe qubit mappings $\ket{{\psi}_A} \mapsto \ket{{\psi}_B}$. When a qubit mapping maps
+a basis state to another basis state with an input dependent phase
+$\ket{\bar{x}} \mapsto \ket{e^{i\phi(\bar{x})}}\ket{\bar{y}}$, $\phi(\bar{x})$ is known as a \emph{relative phase},
+and the mapping is said to implement $\ket{\bar{x}} \mapsto \ket{\bar{y}}$ \emph{up to relative phase}. In this
+work, we focus on the gate set described in~\figref{fig-gates}.
+
+The CNOT, Z, X, H, and CZ gates are all part of the \emph{Clifford gate set}, which are efficiently simulatable
+classically~\cite{bib-gottesman-knill}. Adding $T/T^{\dagger}$ gates creates the \emph{Clifford+T} universal gate
+set, which can represent computations that display quantum advantage. However, T-gates have a much higher
+implementation cost in fault-tolerant quantum computing~\cite{bib-gottesman-stabilizer}. Thus, {\it T-count}, the
+number of $T/T^{\dagger}$ gates, and {\it T-depth}, the longest such serial chain of them in a circuit, are often
+used as a cost metric~\cite{amy-meet-in-middle} to measure quantum circuits.
+
+\subsection{Toffoli Gates and Relative Phase Implementations}
+\label{sub-toff}
+
+Some gates, such as the Toffoli gate in~\figref{fig-toff}, are composite gates that are implemented using the
+Clifford+T gate set. A simple way to derive the Clifford+T implementation of this circuit is to use the symmetry
+of the X and Z operations under the Hadamard transformation, and observe that the Toffoli gate is equivalent to
+a 3 bit Controlled Z (CCZ) gate, sandwiched between two Hadamards on the qubit that will be the target.
+
+The CCZ gate can then be generated from the CNOT+T gate set, that is, using only CNOTs and T/T$^{\dagger}$ set.
+This gate set has a straightforward implementation from what is known as a \emph{sum-of-paths} expression,
+generally expressed as below.
+
+\begin{equation}
+  \begin{aligned}
+    \label{eq-boolean-fourier}
+    f(\mathbf{x}) = \sum_{\mathbf{k} \neq 0} \hat{f}(\mathbf{k}) \cdot \chi_k(\mathbf{x}),
+    \hat{f}(\mathbf{k}) \in \mathbb{R}
+  \end{aligned}
+\end{equation}
+
+Where $\chi_k(\mathbf{x}) = ( k_0 x_0 \oplus k_1 x_1 \oplus \cdots \oplus k_{n-1} x_{n-1})$
+for $\mathbf{k} \in \{0,1\}^{n}$, or the set of linear Boolean functions over each of the bits
+of $\mathbf{x}$, $x_0 \cdots x_{k-1}$.
+
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}{\linewidth}
+    \centering
+    \scalebox{0.7} {
+      \input{img/fig-toff-mark-matroid}
+    }
+    \subcaption{CCZ in CNOT+T}
+    \label{fig-cnot-t-ccz}
+  \end{minipage}
+  \begin{minipage}{\linewidth}
+    \centering
+    \scalebox{0.7} {
+      \input{img/fig-toff-mark-matroid-alt}
+    }
+    \subcaption{Alternate CCZ in CNOT+T}
+    \label{fig-alt-cnot-t-ccz}
+  \end{minipage}
+  \caption{Two separate CCZ gate in CNOT+T basis}
+\end{figure}
+
+From~\figref{fig-cnot-t-ccz}, we can read the actions of the T-gates into sum-of-paths expression as follows: the
+first T gate in the first column adds the term $1/4 \cdot x_0$ and adding the second T$^{\dagger}$-gate in the
+first column adds the term $-1/4 \cdot (x_1 \oplus x_2)$ (notice how the coefficient has a minus sign because of
+the dagger) making the sum-of-paths $1/4 \cdot x_0 -1/4 \cdot (x_1 \oplus x_2)$. We complete these for the
+rest of the T gates and we get the following sum-of-paths expression:
+
+\begin{equation}
+  \label{eq-toff-bool}
+  \begin{aligned}
+    &x_a \cdot x_b \cdot x_c = \frac{1}{4}x_a + \frac{1}{4}x_b + \frac{1}{4}x_c - \frac{1}{4}(x_a \oplus x_b) \\
+    &\qquad -\frac{1}{4}(x_a \oplus x_c) - \frac{1}{4}(x_b \oplus x_c) + \frac{1}{4}(x_a \oplus x_b \oplus x_c)
+  \end{aligned}
+\end{equation}
+
+That is, the phase is $\pi$ when $x_a$, $x_b$, and $x_c$ are true. From here, we can verify
+that~\figref{fig-cnot-t-ccz} implements the CCZ gate.
+
+Observe that because the CCZ gate is its own inverse, adding~\eqnref{eq-toff-bool} to itself gives us $2\pi = 0$.
+In the same way, complementing all of the signs in the sum-of-paths also gives us an expression that can be added
+to~\eqnref{eq-toff-bool}, depicted in~\eqnref{eq-toff-bool-alt}. This gives us an alternate way of implementing
+the CCZ depicted in~\figref{fig-alt-cnot-t-ccz}.
+
+\begin{equation}
+  \label{eq-toff-bool-alt}
+  \begin{aligned}
+    &x_a \cdot x_b \cdot x_c = - \frac{1}{4}x_a - \frac{1}{4}x_b - \frac{1}{4}x_c + \frac{1}{4}(x_a \oplus x_b) \\
+    &\qquad + \frac{1}{4}(x_a \oplus x_c) + \frac{1}{4}(x_b \oplus x_c) - \frac{1}{4}(x_a \oplus x_b \oplus x_c)
+  \end{aligned}
+\end{equation}
+
+Suppose in our example, the Hadamard gates conjugate the CCZ gate on the $x_c$ qubit. Observe that three terms:
+$x_a$, $x_b$, and $x_a \oplus x_b$ have no dependence on $x_c$. Removing them means the Hadamard gates transform
+the resulting gate into a relative phase Toffoli gate (RTOF), which implements the Toffoli gate up to relative
+phase, where the relative phase is equal to the complement of the terms we eliminated~\cite{bib-amy-phase-state}.
+\figref{fig-rtof} shows one implementation of such an RTOF, which can be implemented with three fewer T-gates
+than the Toffoli gate. In general, we can use this principle to create relative phase versions of Boolean logic
+with lower T-count than the normal versions, as we will seein~\secref{Pro}.
+
+\begin{figure}
+  \scalebox{0.8} {
+    \input{fig-rtof}
+  }
+  \caption{A relative phase Toffoli gate}
+  \label{fig-rtof}
+\end{figure}
+
+Observe that because there is a second, complementary implementation of the Toffoli gate, which uses the
+complementary sum-of-paths in~\eqnref{eq-toff-bool-alt} we can also create an RTOF from this sum-of-paths
+with a complementary relative phase to~\figref{fig-rtof}. We can use these two in tandem later to reduce the
+T-count in decompositions such as in~\secref{sub-mct}.
+
+
+\subsection{Multiple Control Toffoli Gate Decompositions}
+\label{sub-mct}
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}{\linewidth}
+    \centering
+    \scalebox{1.0} {
+      \input{img/fig-clean-toff}
+    }
+    \subcaption{Clean Ancilla Decomposition of MCT}
+    \label{fig-clean-mct}
+  \end{minipage}
+  \begin{minipage}{\linewidth}
+    \centering
+    \scalebox{1.0} {
+      \input{img/fig-dirty-toff}
+    }
+    \subcaption{Dirty Ancilla Decomposition of MCT}
+    \label{fig-dirty-mct}
+  \end{minipage}
+  \caption{MCT Decompositions}
+  \label{fig-mct-decomp}
+\end{figure}
+
+
+\begin{figure}[t]
+  \scalebox{0.8} {
+    \input{fig-xag-ex-toff}
+  }
+  \caption{Quantum Circuit for~\figref{fig-xag}}
+  \label{fig-xag-qc} 
+\end{figure}
+
+Multiple Control Toffoli (MCT) gates are generalized Toffoli gates with an arbitrary number
+of control bits. In general decomposing them takes exponential cost~\cite{bib-maslov-rtof}
+without any ancilla, while using ancilla allows for a linear
+cost~\cite{bib-barenco-elementary}. There are two types of ancilla available for use:
+\emph{clean ancilla}, which are initialized to 0, and \emph{dirty ancilla}, which have no
+assumptions on their values. While it is widely known that clean ancilla decompositions
+can be implemented with fewer Toffoli gates than dirty ancilla
+decompositions~\cite{bib-mike-and-ike} in the reversible case , several results since have
+demonstrated that using relative phase constructions can bring down the
+cost~\cite{bib-maslov-rtof, bib-amy-phase-state, bib-abdessaied-mct}. In fact, it has
+recently been demonstrated that linear cost can be achieved using a single
+ancilla~\cite{bib-zindorf-mct}. However, all of these methods still show a linear
+separation between the cost of decomposing an MCT using clean and dirty ancilla.
+
+We use the dirty ancilla MCT deconstructions as a base for our dirty ancilla XAG
+construction. We then demonstrate that in the quantum case, implementing such a dirty
+ancilla XAG construction actually has the same cost as the clean ancilla deconstruction.
+
+\subsection{Logic Networks and XOR-And-Inverter Graphs}
+\label{sub-xag}
+\begin{figure}
+  \centering
+  \scalebox{1.0} {
+    \input{new_new_xag}
+  }
+  \caption{An XOR-AND-Inverter Graph for $x_1(x_2 \oplus x_3x_4)\oplus x_2x_3$}
+  \label{fig-xag}
+\end{figure}
+
+A {\it Boolean logic network} is a simple Directed Acyclic Graph (DAG). It has nodes,
+edges, primary outputs, and primary inputs. Each Boolean logic network represents a
+Boolean function, and a \emph{node} represents a subfunction used to decompose that Boolean
+function. It has zero or more {\it fanins}, or incoming edges, as well as zero or more
+{\it fanouts} or outgoing edges. The {\it primary inputs (PIs)} are nodes without fanins
+in the current network. The {\it primary outputs} are a subset of nodes in the network
+without fanouts.
+
+XOR-AND-Inverter graphs (XAG) are examples of such logic networks, where each node
+represents either the AND operation $\land$ or the XOR operation $\oplus$, while
+bubbles on either the input fanins or the output fanins represent negations of those
+values.~\figref{fig-xag} shows an example of such a XAG.
+
+\subsection{Synthesizing Quantum Circuits from XAG}
+\label{sub-synth-xag}
+Meuli et al~\cite{bib-meuli-ros} demonstrated that quantum circuits can be generated from
+XAG. AND nodes are implemented by routing the fanins to the input of a Toffoli gate that
+acts on a clean ancilla. XOR nodes are implemented by placing the targets of the
+subcircuits implementing the fanin nodes onto a clean ancilla in series; any fanins that
+are primary inputs are implemented as a CNOT gate with its control on the primary input
+and the target on the same clean ancilla that the other fanin acts on. Any actions on
+clean ancilla needs to be uncomputed.
+
+Because the AND nodes are implemented using Toffoli gates, the number of AND nodes in
+the circuit corresponds directly to the T-count of the circuit. Methods to
+optimize XAG for these metrics thus present an opportunity to optimize for T-count in
+these methods.
+
+Converting an XAG to a quantum circuit is straightforward exercise. Any AND node is 
+turned into a Toffoli gate, with its fanins routed to the Toffoli gate's inputs, and
+its target set to a clean ancilla, which describes the AND node's output. XOR operations
+are implemented with the incoming subcircuits acting on the same clean ancilla.
+
+While there are many ways of traversing this XAG to optimize for ancilla qubits, we
+focus on the \emph{Bennett method}~\cite{bib-time-space-bennett}, which traverses the
+XAG depth first from the inputs in order to minimize the number of times a value has to
+be uncomputed. The result of generating such an XAG is depicted in~\figref{fig-xag-qc}.
+
+We can apply the same replacement with relative phase Toffoli as we did in~\secref{sub-mct}
+in order to achieve a lower T-count. 
+
+

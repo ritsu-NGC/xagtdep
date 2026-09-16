@@ -1,0 +1,11 @@
+%% \begin{quantikz}[row sep=0.25cm, column sep=0.35cm]
+%% \lstick{} & \ctrl{2}  & \lstick{} &\ghost{\qw}         & \ghost{\qw} & \qw & \qw                & \targ{}   & \qw      & \ctrl{1} & \gate{T}           & \ctrl{1} & \qw      & \targ{}    & \qw \\
+%% \lstick{} & \ctrl{1}  & \lstick{} &\push{=} & \ghost{\qw} & \qw & \qw                & \qw       & \ctrl{1} & \targ{}  & \gate{T^{\dagger}} & \targ{}  & \ctrl{1} & \qw        & \qw \\
+%% \lstick{} & \gate{iZ} & \lstick{} &\push{ } & \ghost{\qw} & \qw & \gate{T^{\dagger}} & \ctrl{-2} & \targ{}  & \qw      & \gate{T}           & \qw      & \targ{}  & \ctrl{-2}  & \qw 
+%% \end{quantikz}
+\begin{quantikz}[row sep=0.25cm, column sep=0.35cm]
+\lstick{$\ket{x_a}$} & \ctrl{1}                & \setwiretype{n} &          && \setwiretype{q} & \qw &          & \qw & \qw                & \targ{}   & \qw      & \ctrl{1} & \gate{T}           & \ctrl{1} & \qw      & \targ{}    &          & \qw \\
+\lstick{$\ket{x_b}$} & \ctrl{1}                & \setwiretype{n} & \push{=} && \setwiretype{q} & \qw &          & \qw & \qw                & \qw       & \ctrl{1} & \targ{}  & \gate{T^{\dagger}} & \targ{}  & \ctrl{1} & \qw        &          & \qw \\
+\lstick{$\ket{x_c}$} & \targ[style={double}]{} & \setwiretype{n} &          && \setwiretype{q} & \qw & \gate{H} & \qw & \gate{T^{\dagger}} & \ctrl{-2} & \targ{}  & \qw      & \gate{T}           & \qw      & \targ{}  & \ctrl{-2}  & \gate{H} & \qw \\
+\end{quantikz}
+

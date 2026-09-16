@@ -1,0 +1,18 @@
+\begin{quantikz}[row sep=0.3cm, column sep=0.3cm]
+\qw              & \qw             & \qw        & \gate[2]{F}         & \qw               & \qw      & \qw    \\
+\qw              & \qw             & \qw        & \ghost{F}\ctrl{2}   & \qw               & \qw      & \qw    \\
+\lstick{$G$}     & \qw             & \ctrl{1}   & \qw                 & \ctrl{1}          & \qw      & \qw    \\
+\lstick{$a_0$}   & \qw             & \gate{Z}   & \targ{}             & \gate{Z^\dagger}  & \qw      & \qw    \\
+\lstick{$t$}     & \gate{H}        & \ctrl{-1}  & \qw                 & \ctrl{-1}         & \gate{H} & \qw    \\
+\end{quantikz}
+
+%% \begin{quantikz}[row sep=0.3cm, column sep=0.55cm]
+%% \qw              & \qw             & \qw        & \qw             & \qw              & \gate[2]{F_i}       & \qw                    & \qw       & \qw             & \qw      & \qw        & \qw              & \gate[2]{F_i}        & \qw                     & \qw        \\
+%% \qw              & \qw             & \qw        & \qw             & \qw              & \ghost{F_i}         & \qw                    & \qw       & \qw             & \qw      & \qw        & \qw              & \ghost{F_i}          & \qw                     & \qw        \\
+%% \qw              & \qw             & \qw        & \qw             & \ctrl{2}         & \qw                 & \ctrl{2}               & \qw       & \qw             & \qw      & \qw        & \ctrl{2}         & \qw                 & \ctrl{2}                & \qw         \\
+%% \qw              & \qw             & \octrl{2}  & \qw             & \qw              & \qw                 & \qw                    & \qw       & \qw             & \qw      & \qw        & \qw              & \qw                 & \qw                     & \qw         \\
+%% \lstick{$a_1$}   & \qw             & \qw        & \qw             & \gate{i\omega Z} & \targ{}             & \gate{i\omega Z^\dagger} & \qw       & \octrl{1}       & \qw      & \qw        & \gate{i\omega Z} & \targ{}             & \gate{i\omega Z^\dagger}  & \qw          \\
+%% \lstick{$a_2$}   & \qw             & \gate{iZ}  & \gate{H}        & \ctrl{-1}        & \qw                 & \ctrl{-1}              & \gate{H}  & \gate{iZ^\dagger} & \qw      & \gate{H}   & \ctrl{-1}        & \qw                 & \ctrl{-1}               & \gate{H}     \\
+%% \lstick{}        & \gate{H}        & \ctrl{-1}  & \qw             & \qw              & \qw                 & \qw                    & \qw       & \ctrl{-1}       & \gate{H} & \qw        & \qw              & \qw                 & \qw                     & \qw          \\
+%%\end{quantikz}
+

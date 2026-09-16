@@ -1,0 +1,299 @@
+\section{Proposed}
+\label{Pro}
+
+\subsection{Dirty Ancilla Node Gadgets}
+\label{sub-synth}
+Here we take the dirty ancilla construction in~\ref{sub-mct}, and create a gadget to
+realize an XAG AND node using dirty ancilla. First, we separate the construction into
+two parts, as in~\figref{fig-dirt-mct-org}: we label these \emph{compute}, and \emph{uncompute}.
+We observe that the Toffoli gate in compute can be replaced with a single target controlled
+gate for an arbitrary function F; that is, it's a gate that flips its target bit when a
+function F is true. We can implement this function F as a quantum
+subcircuit~\cite{bib-amy-phase-state}, and so we can realize a recursive construction, depicted
+in~\figref{fig-compute}. The Toffoli gate in the uncompute gadget can thus be replaced with the
+gate F's adjoint. For a relative phase gate, this means implementing F's components' adjoints in
+reverse, to realize a gate that implements the same function, but with the opposite relative phase
+~\cite{bib-maslov-rtof}.
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{img/fig-gadget-decomp.tex}
+  }
+  \caption{Dirty MCT decomposition base}
+  \label{fig-dirt-mct-org}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-CZ-and}
+  }
+  \caption{Compute gadget}
+  \label{fig-compute}
+\end{figure}
+
+We utilize the fact that the CCZ has two complementary implementations to our advantage by replacing the left CCZ
+gate with~\figref{fig-cnot-t-ccz} and the right with \figref{fig-alt-cnot-t-ccz}. In so doing we can combine their
+sum-of-paths to get the below sum-of-paths equation:
+
+\begin{equation}
+  \label{eq-toff-tot}
+  \begin{aligned}
+    &\frac{1}{4}z + \frac{1}{4}a + \frac{1}{4}f - \frac{1}{4}(z \oplus a) \\
+    &\qquad -\frac{1}{4}(z \oplus f) - \frac{1}{4}(a \oplus f) + \frac{1}{4}(z \oplus a \oplus f)\\
+    &- \frac{1}{4}z - \frac{1}{4}(xy \oplus a) - \frac{1}{4} f + \frac{1}{4}(z \oplus xy \oplus a) \\
+    &\qquad + \frac{1}{4}(z \oplus f) + \frac{1}{4}(xy \oplus a \oplus f) - \frac{1}{4}(z \oplus xy \oplus a \oplus f)
+  \end{aligned}
+\end{equation}
+
+This causes some cancellations, and we are left with:
+
+\begin{equation}
+  \label{eq-toff-simp}
+  \begin{aligned}
+    &\frac{1}{4}a - \frac{1}{4}(z \oplus a) - \frac{1}{4}(xy \oplus a) + \frac{1}{4}(z \oplus xy \oplus a)  \\
+    &+ \frac{1}{4}(z \oplus a \oplus f) - \frac{1}{4}(a \oplus f) + \frac{1}{4}(xy \oplus a \oplus f) \\
+    &- \frac{1}{4}(z \oplus xy \oplus a \oplus f)
+  \end{aligned}
+\end{equation}
+
+Observe that the first line in\eqnref{eq-toff-simp} contains only terms that have no dependence on $f$.
+That means we can bring them out from the summation to create a relative phase version of the compute
+gadget, which we depict in~\figref{fig-dirty-gadget-rp}. This means that we can implement the compute
+gadget with the same T-count as a relative phase Toffoli gate. We can similarly formulate an uncompute
+gadget that is this gadget's conjugate, in order to uncompute the value for the same cost. This implies
+that any intermediate computation using dirty ancilla can be performed with the same cost as a relative
+phase Toffoli gate. 
+
+The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. This means that the T-count of
+implementing the output node gadget is 8, so that the difference in T-count between the clean ancilla and
+the dirty ancilla decompositions is dependent on the number of these output nodes, which is the number of
+output bits of the Boolean function $m$. This means that for an MCT gate, the difference between clean
+ancilla and dirty ancilla is 1 T-gate. We can implement these as two RTOF gates.
+
+\begin{table*}[t]
+\centering
+\scalebox{0.9}{
+  \begin{tabular}{p{0.05\textwidth}|p{0.10\textwidth}|p{0.10\textwidth}|p{0.75\textwidth}}
+    \# & Node & Conditions & Gadget \\\hline
+       {1}
+       &
+       \scalebox{1.0} {
+         \input{xag_and}
+       }
+       &
+       One of A or B are primary inputs and the other is a fanin from another node.
+       All fanouts F are intermediate fanouts
+       &
+       \scalebox{0.9} {
+         \input{fig-prop-and}
+       }\\\hline
+       {2}
+       &
+       \scalebox{1.0} {
+         \input{xag_and}
+       }
+       &
+       Both A and B are fanins from other nodes
+       &
+       \scalebox{0.9} {
+         \input{fig-prop-and-node-fanin}
+       }\\\hline
+       {3}
+       &
+       \scalebox{1.0} {
+         \input{xag_and}
+       }
+       &
+       A and B are primary inputs
+       &
+       \scalebox{1.0} {
+         \input{fig-rtof}
+       }\\\hline
+       {4}
+       &
+       \scalebox{1.0} {
+         \input{xag_and}
+       }
+       &
+       F is a primary output or fans out into an XOR node that is a primary output
+       &
+       \scalebox{0.9} {
+         \input{fig-prop-last-small}
+       }\\\hline
+       {4}
+       &
+       \scalebox{1.0} {
+         \input{xag_xor}
+       }
+       &
+       Any XOR node
+       &
+       \scalebox{1.0} {
+         \input{fig-and}
+       }
+  \end{tabular}
+}
+\caption{Dirty Ancilla Gadgets}
+\label{fig-gadgets}
+\end{table*}
+
+%% \begin{table*}[t]
+%% \centering
+%% \begin{tabular}{p{0.25\textwidth}|p{0.24\textwidth}|p{1.5\textwidth}}
+%%   Node & Conditions & Gadget \\\hline
+%%   \subfloat[AND-node]{
+%%     \makebox[0.25\textwidth][c]{\input{xag_and_node}
+%%   }
+%%   &
+%%   F and G are primary inputs and all fanouts are intermediate fanouts
+%%   &
+%%   \subfloat[AND-gadget]{
+%%     \makebox[\textwidth][c]{\input{fig-prop-and}}
+%%   }
+%% \end{tabular}
+%% \caption{Phase Gadgets}
+%% \label{fig-gadgets}
+%% \end{table*}
+
+
+%% The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. Observe, however that
+%% $\frac{1}{4}a - \frac{1}{4}(z \oplus a) = - \frac{1}{4}z + \frac{1}{2}(a)$. The $\frac{1}{2}$ coefficient
+%% can be implemented by an S gate, which is a Clifford gate and has a much more efficient fault-tolerant
+%% implementation in most error correcting codes. This means that the T-count of implementing the output
+%% node gadget is 7, the exact same as the Toffoli gate which is used as an output node in clean ancilla
+%% decomposition.
+
+\begin{figure}
+  \scalebox{0.6} {
+    \input{fig-prop-and}
+  }
+  \caption{Relative Phase version of dirty ancilla intermediate compute gadget}
+  \label{fig-dirty-gadget-rp}
+\end{figure}
+
+\subsection{Proposed Method}
+
+Our proposed method is as follows
+
+\begin{enumerate}
+\item Get the next node in the traversal of the XAG, usually from the input
+\item Create a subcircuit according to~\tabref{fig-gadgets}
+\item Pass on this subcircuit to the next iteration of the algorithm
+\item If this node fans out into a primary output, or an XOR node that fans out
+  into a primary output take the complement of the passed down subcircuit and set
+  it to act on the ancilla that the node uses.
+\item If the node is dependent on another subcircuit/subgraph, block until that subcircuit is
+  processed.
+\item Terminate when all nodes have been processed.
+\end{enumerate}
+
+\begin{example}
+  \label{ex-dirty-xag}
+  We again generate the XAG for~\figref{fig-xag}. Starting from $x_5$ and $x_4$, we
+  generate the node they feed into as an RTOF, and pass this RTOF onto the next stage of the iteration.
+  We also generate the node taking in $x_2$ and $x_3$, and see that it feeds into an XOR node that
+  fans out into a primary output. We generate a Toffoli, and block for the other input.
+  We next generate that node's fanout to $x_3$, Because this takes in a fanin from a primary
+  input and another node, we plug the RTOF passed down from the previous iteration as $A$
+  in gadget\#1, and pass this subcircuit down to the next part of the iteration. We move onto
+  the XOR node taking in $x_2$. Since that is an XOR, we generate a subcircuit using a CNOT with
+  $x_2$ as an input and replace it in gadget\#4 along with the passed down subcircuit, and pass this
+  subcircuit down further. We again repeat the AND procedure for the $x_1$ node the XOR feeds into,
+  and feed that output to the next step. Once we have reached the last XOR node, we process both
+  the Toffoli feeding into it and the other branch, and generate the full circuit. The full circuit
+  is depicted in~\figref{fig-prop-decomp}. We can verify from this diagram that the T-count of this
+  is indeed 1 more than the T-count of~\figref{fig-xag-qc} after optimizing it to use RTOF to reduce
+  its T-count.
+\end{example}
+
+\begin{figure*}[t]
+  \centering
+  \scalebox{0.8} {
+    \input{fig-prop-decomp}
+  }
+  \caption{Synthesis of circuit in Example~\ref{ex-dirty-xag}}
+  \label{fig-prop-decomp}
+\end{figure*}
+  
+%% \begin{algorithm}[h]
+%%   \caption{Proposed Method}
+%%   \label{alg-prop}
+%%   \begin{algorithmic}[1]
+
+%%     \State $QC \gets$ empty quantum circuit
+%%     \State $xag \gets$ XOR-And-Inverter Graph of the function
+%%     \State $QC \gets \textsc{parseXAG}(xag, QC)$
+
+%%     \Function{parseXAG}{xag, QC}
+%%     \If{$node \gets$ $next\_node(xag)$}
+%%        \State $node \gets$ $next\_node(xag)$ \Comment{This is set by a traversal algorithm}
+%%     \Else
+%%        \State \Return $QC$
+%%     \EndIf
+    
+%%     \Switch{}
+%%     \Case{$node$ is XOR}
+%%       \State $subQC \gets$ generate \#4
+%%     \EndCase
+%%     \Case{$node$ is AND and $A$ and $B$ are primary inputs}
+%%       \State $subQC \gets$ generate \#2
+%%     \EndCase
+%%     \Case{$node$ is AND node output is primary output}
+%%          \State $subQC \gets$ generate \#3
+%%          \State $Uncompute \gets$ QC acting on ancilla bit of subQC
+%%          \State $subQC \gets$ Uncompute appended to subQC
+%%     \EndCase
+%%     \Case{$node$ is AND and one of $A$, $B$ is primary input}
+%%          \State $A$ or $B$ $\gets$ QC \Comment{QC is the subcircuit implementing $A$ or $B$}   
+%%          \State $subQC \gets$ generate \#1
+%%     \EndCase
+%%     \EndSwitch
+    
+%%     \State $next_xags \gets$ subgraphs from $node$'s fanouts
+%%     \For{$xag \in next\_xags$}
+%%         \State $retQC$ + $parseXAG(xag, subQC)$
+%%     \EndFor
+%%     \State
+%%     \Return $retQC$
+%%     \EndFunction
+%%   \end{algorithmic}
+%% \end{algorithm}
+
+\subsection{MCT Clean and Dirty Ancilla Decomposition Implications}
+
+Observe that the XAG for the $n$-input AND function is the chain of AND nodes in~\figref{fig-mct-xag}.
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-mct-xag}
+
+
+  }
+  \caption{XAG for an MCT gate}
+  \label{fig-mct-xag}
+\end{figure}
+
+This allows us to create a a quantum circuit based off the gadgets in~\tabref{fig-gadgets}. This is depicted
+in~\figref{fig-mct-gadgets}. 
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-prop-and-ex}
+  }
+  \caption{Synthesis of~\figref{fig-mct-xag} using dirty ancilla gadgets}
+  \label{fig-mct-gadgets}
+\end{figure}
+
+This construction is remarkably similar to the ``V-chain'' that is created when the clean ancilla 
+decomposition is used, such as in~\figref{fig-clean-mct}. This demonstrates that the difference in
+cost between a dirty ancilla decomposition and a clean ancilla decomposition is the cost of the
+final $\wedge$ gadget, which uses one more T-gate than the Toffoli gate that the clean ancilla
+decomposition uses.
+
+
+
+

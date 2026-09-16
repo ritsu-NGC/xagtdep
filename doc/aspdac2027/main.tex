@@ -1,0 +1,163 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{amsmath,amssymb,amsfonts,amstext}
+% \usepackage{algorithmic}
+\usepackage[dvipdfmx]{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage[T1]{fontenc}
+\usepackage{mdframed}
+\usepackage{algorithm, algpseudocode} % texlive-science
+%\usepackage[braket, qm]{qcircuit}
+\usepackage{newtxtext}
+\usepackage[normalem]{ulem}
+\usepackage{nameref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes, positioning, calc, fit,tikzmark}
+\usepackage{quantikz}
+
+\input{img/defs}
+
+\makeatletter
+\newcommand{\sublabel}[1]{\protected@edef\@currentlabel{\thefigure(\thesubfigure)}\label{#1}}
+\makeatother
+\captionsetup{subrefformat=parens}
+\algrenewcommand\algorithmicindent{0.5em}
+\newtheorem{definition}{Definition}
+\newtheorem{example}{Example}
+\newcommand{\thickhline}{%
+    \noalign {\ifnum 0=`}\fi \hrule height 1pt
+    \futurelet \reserved@a \@xhline
+}
+%\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+%    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\newcommand{\figcaption}[1]{\def\@captype{figure}\caption{#1}}
+\newcommand{\tblcaption}[1]{\def\@captype{table}\caption{#1}}
+
+\newcommand{\Del}[1]{\textcolor{red}{\sout{#1}}}
+\newcommand{\Add}[1]{\textcolor{blue}{\emph{#1}}}
+
+\newcount\NGCcolor
+\NGCcolor=1
+\newcount\NGCcolortwo
+\NGCcolortwo=1
+%\NGCcolor=0
+\ifnum\NGCcolortwo<1
+  \newcommand{\blueoutt}[1]{\textcolor{blue}{#1}}  
+\else
+  \newcommand{\blueoutt}[1]{#1}
+\fi
+  
+\ifnum\NGCcolor<1
+  \newcommand{\redout}[1]{\textcolor{red}{#1}}
+  \newcommand{\blueout}[1]{\textcolor{blue}{#1}}
+  \newcommand{\greenout}[1]{\textcolor{green}{#1}}
+  \newcommand{\cyannout}[1]{\textcolor{cyan}{#1}}
+  \newcommand{\magentaout}[1]{\textcolor{magenta}{#1}}
+  \newcommand{\yellowout}[1]{\textcolor{yellow}{\bf #1}}
+  \newcommand{\algblueout}[1]{\leavevmode\color{blue}{#1}}
+\else
+  \newcommand{\redout}[1]{#1}
+  \newcommand{\blueout}[1]{#1}
+  \newcommand{\greenout}[1]{#1}
+  \newcommand{\cyannout}[1]{#1}
+  \newcommand{\magentaout}[1]{#1}
+  \newcommand{\yellowout}[1]{#1}
+  \newcommand{\algblueout}[1]{\leavevmode {#1}}
+\fi
+
+\newcommand{\secref}[1]{Sec.~\ref{#1}}
+\newcommand{\figref}[1]{Fig.~\ref{#1}}
+\newcommand{\tabref}[1]{Table~\ref{#1}}
+\newcommand{\eqnref}[1]{Eq.~\ref{#1}}
+
+\algnewcommand\algorithmicswitch{\textbf{switch}}
+\algnewcommand\algorithmiccase{\textbf{case}}
+\algnewcommand\algorithmicassert{\texttt{assert}}
+\algnewcommand\Assert[1]{\State \algorithmicassert(#1)}%
+% New "environments"
+\algdef{SE}[SWITCH]{Switch}{EndSwitch}[1]{\algorithmicswitch\ #1\ \algorithmicdo}{\algorithmicend\ \algorithmicswitch}%
+\algdef{SE}[CASE]{Case}{EndCase}[1]{\algorithmiccase\ #1}{\algorithmicend\ \algorithmiccase}%
+\algtext*{EndSwitch}%
+\algtext*{EndCase}%
+\renewcommand{\baselinestretch}{1.05}
+\begin{document}
+
+\title{XAG Dirty Ancilla Synthesis costs almost the same as Clean Ancilla Synthesis}
+\author{
+    \IEEEauthorblockN{\phantom{David Clarino}}
+    \IEEEauthorblockA{\phantom{Ritsumeikan University} \\
+      \phantom{dclarino@fc.ritsumei.ac.jp}}
+    \and 
+    \IEEEauthorblockN{\phantom{Shigeru Yamashita}}
+    \IEEEauthorblockA{\phantom{Ritsumeikan University} \\
+      \phantom{ger@cs.ritsumei.ac.jp}}
+}
+
+\maketitle
+
+\begin{abstract}
+  XOR-AND-Inverter graphs (XAG) have been used to generate quantum Boolean circuits. Using
+  techniques such as AND node minimization and AND gate minimization, this expression can
+  help reduce the quantum cost to implement such Boolean functions. In particular, in this
+  work, we focus on the T-count and the T-depth. However, current XAG generation techniques
+  such as caterpillar and LHRS require the use of clean ancilla qubits, or qubits which are
+  initialized to the 0 state, which are not as abundant in a real quantum computer.
+  This necessitates the use of techniques such as pebbling to conserve the number of clean
+  ancillae to be used for synthesis. In this work, we take inspiration from the technique
+  of using dirty ancillae, which have some non zero state on them, to decompose Multiple
+  Control Toffoli (MCT) gates. In existing constructions, however, dirty ancillae
+  decompositions incur additional T-count and T-depth. We demonstrate in this work that
+  composing from an XAG incurs mostly the same cost using dirty ancillae as clean ancillae,
+  that being a single T-gate. In particular, we demonstrate that their T-counts differ by
+  an amount equal to the number of primary outputs. We use this to demonstrate that a
+  clean ancilla MCT decomposition and a dirty ancilla MCT decomposition differ in cost by a
+  single T-gate, regardless of the number of controls. 
+\end{abstract}
+
+
+%% \begin{abstract}
+%%   Multiple Control Toffoli (MCT) gates are an essential part of quantum computing. They create entanglements that
+%%   are non-Clifford in nature, enabling quantum computations with advantage over the classical case. MCT gates,
+%%   however, are not directly implementable on hardware. They are often decomposed into Toffoli gates, which in
+%%   turn are decomposed into the Clifford+T gate set, whose cost can be measured using T-count, the number of
+%%   T-gates used to implement a circuit.  With the use of ancilla qubits, MCT gates can be decomposed with a number
+%%   of Toffoli gates linear with its inputs, which also means a T-count linear with its inputs. There exist two ways
+%%   to do this: clean ancilla, which are initialized to 0, and dirty ancilla, which can have any value. In the
+%%   original formulation of the decomposition in Barenco et al, dirty ancilla decompositions use more Toffoli gates
+%%   than clean ancilla. Later results, such as Maslov's RTOF decomposition, use relative phase gates, which
+%%   implement a Boolean function while allowing a relative phase, to save on T-count. However, even using a relative
+%%   phase, these deconstructions show a linear separation in their T-count. Here, we propose a decomposition
+%%   which leverages relative phase to further reduce T-count, to the point that it eliminates this linear separation.
+%%   That is, we demonstrate that dirty ancilla decompositions of an MCT cost at most 1 more T-gate, regardless of
+%%   number of inputs, than clean ancilla decompositions. We demonstrate improvements in T-count for other common
+%%   constructions that use this dirty ancilla decomposition, such as the single ancilla decomposition with linear
+%%   cost.
+%% \end{abstract}
+
+\input{Intro}
+
+\input{Pre}
+
+% \input{Mot}
+
+\input{Pro}
+
+%\input{Exp}
+
+\vspace{0.5cm}
+\input{Conc}
+
+% DCTODO: Add Evaluation, Results, and Conclusion Sections
+\vspace{2cm}
+\renewcommand{\baselinestretch}{1.10}
+\bibliographystyle{unsrt}
+\bibliography{ref}
+
+\end{document}

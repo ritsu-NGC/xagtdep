@@ -1,0 +1,25 @@
+\begin{quantikz}[row sep=0.5em, column sep=0.5em]
+  \setwiretype{n}    &     &                                                                                                                                                                 & \push{Compute} &          &  & \push{Uncompute}                                                                                                                                                     &  &  \\
+  \setwiretype{n}    &     &                                                                                                                                                                 &                &          &  &                                                                                                                                                                      &  &  \\  
+  \lstick{\ket{x_0}} & \qw & \qw \gategroup[5,steps=3,style={dashed,rounded corners,fill=blue!20, inner xsep=2pt},background,label style={label position=above,anchor=north,yshift=-0.2cm}]{}& \ctrl{1}       & \qw      &  & \ctrl{1} \gategroup[5,steps=2,style={dashed,rounded corners,fill=red!20, inner xsep=2pt},background,label style={label position=above,anchor=north,yshift=-0.2cm}]{} &  & \rstick{\ket{x_0}} \\
+  \lstick{\ket{x_1}} & \qw & \qw                                                                                                                                                             & \ctrl{2}       & \qw      &  & \ctrl{2}                                                                                                                                                             &  & \rstick{\ket{x_1}} \\
+  \lstick{\ket{x_2}} & \qw & \ctrl{1}                                                                                                                                                        & \qw            & \ctrl{1} &  & \qw                                                                                                                                                                  &  & \rstick{\ket{x_2}} \\
+  \lstick{a}         & \qw & \ctrl{1}                                                                                                                                                        & \targ{}        & \ctrl{1} &  & \targ{}                                                                                                                                                              &  & \rstick{a} \\  
+  \lstick{\ket{y}}   & \qw & \targ{}                                                                                                                                                         & \qw            & \targ{}  &  & \qw                                                                                                                                                                  &  & \rstick{\ket{x_0 \cdot x_1 \oplus y}}  
+\end{quantikz}
+
+%% \begin{quantikz}[row sep=0.5em, column sep=0.5em]
+%%   \lstick{\ket{x_0}} & \qw & \qw      & \ctrl{1} & \qw      & \ctrl{1} & \qw & \rstick{\ket{x_0}} \\
+%%   \lstick{\ket{x_1}} & \qw & \qw      & \ctrl{2} & \qw      & \ctrl{2} & \qw & \rstick{\ket{x_1}} \\
+%%   \lstick{\ket{x_2}} & \qw & \ctrl{1}\gategroup[5,steps=3,style={dashed,rounded corners},label style={above}]{Compute} & \qw      & \ctrl{1} & \qw      & \qw & \rstick{\ket{x_2}} \\
+%%   \lstick{a}         & \qw & \ctrl{1} & \targ{}  & \ctrl{1} & \targ{}  &     & \rstick{a} \\  
+%%   \lstick{\ket{y}}   & \qw & \targ{}  & \qw      & \targ{}\gategroup[5,steps=1,style={dashed,rounded corners},label style={above}]{Uncompute} & \qw      & \qw & \rstick{\ket{x_0 \cdot x_1 \oplus y}}  \\
+%% \end{quantikz}
+%% \begin{quantikz}[row sep=0.5em, column sep=0.5em]
+%%   \lstick{\ket{x_0}} & \qw & \qw      & \ctrl{1} & \qw      & \ctrl{1} & \qw & \rstick{\ket{x_0}} \\
+%%   \lstick{\ket{x_1}} & \qw & \qw      & \ctrl{2} & \qw      & \ctrl{2} & \qw & \rstick{\ket{x_1}} \\
+%%   \lstick{\ket{x_2}} & \qw & \ctrl{1} & \qw      & \ctrl{1} & \qw      & \qw & \rstick{\ket{x_2}} \\
+%%   \lstick{a}         & \qw & \ctrl{1} & \targ{}  & \ctrl{1} & \targ{}  &  & \rstick{a} \\  
+%%   \lstick{\ket{y}}   & \qw & \targ{}  & \qw      & \targ{}  & \qw      & \qw & \rstick{\ket{x_0 \cdot x_1 \oplus y}}  \\
+%% \end{quantikz}                        
+
