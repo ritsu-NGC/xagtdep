@@ -26,12 +26,14 @@ endfunction()
 
 # Create test executables
 add_module_test(DavioDecompositionTest DavioDecomposition)
+add_module_test(AIGReaderTest QC NewMethodObj XAGObj)
 add_module_test(FunctionTest Function)
 add_module_test(NewMethodTest NewMethod)
 add_module_test(QCTest QC NewMethodObj XAGObj)
 add_module_test(XAGTest XAG NewMethodObj)
 
 add_test(NAME DavioDecompositionTest COMMAND DavioDecompositionTest)
+add_test(NAME AIGReaderTest COMMAND AIGReaderTest)
 add_test(NAME FunctionTest COMMAND FunctionTest)
 add_test(NAME NewMethodTest COMMAND NewMethodTest)
 add_test(NAME QCTest COMMAND QCTest)
@@ -79,6 +81,25 @@ set_target_properties(QCVerificationTest PROPERTIES
 add_test(NAME QCVerificationTest COMMAND QCVerificationTest
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 
+# Random Boolean function comparison runner — generates random XAGs, compares
+# Bennett pebbling against the caterpillar-backed proposed path, and writes
+# CSV/LaTeX summaries.
+add_executable(RandomBooleanFunctionTest RandomBooleanFunctionTest.cpp)
+target_link_libraries(RandomBooleanFunctionTest QCObj NewMethodObj XAGObj caterpillar mockturtle ${llvm_libs})
+target_include_directories(RandomBooleanFunctionTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/QC
+)
+set_target_properties(RandomBooleanFunctionTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+add_test(NAME RandomBooleanFunctionTest COMMAND RandomBooleanFunctionTest
+    --qubit-count 5
+    --num-functions 1
+    --output-csv random_bool_test.csv
+    --output-latex random_bool_test.tex
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
+
 # Strict-lane runner — only runs configs in test/ci_passing_set.json.
 # Not registered with ctest; the CI workflow invokes it directly so it can
 # chain verify_circuits.py --strict after.
@@ -97,6 +118,23 @@ target_compile_definitions(CIQCVerification PRIVATE
 set_target_properties(CIQCVerification PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# EPFL combinational benchmark test — parses all 20 .aig circuits and validates
+# AIGReader + AIGToQC on real-world netlists.
+add_executable(EPFLBenchmarkTest EPFLBenchmarkTest.cpp)
+target_link_libraries(EPFLBenchmarkTest QCObj NewMethodObj XAGObj ${llvm_libs})
+target_include_directories(EPFLBenchmarkTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src/QC
+)
+target_compile_definitions(EPFLBenchmarkTest PRIVATE
+    EPFL_BENCHMARK_DIR="${CMAKE_SOURCE_DIR}/test/epfl_benchmarks"
+)
+set_target_properties(EPFLBenchmarkTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+add_test(NAME EPFLBenchmarkTest
+    COMMAND EPFLBenchmarkTest "${CMAKE_SOURCE_DIR}/test/epfl_benchmarks")
 
 # Copy test files to build directory
 configure_file(test_input.ll ${CMAKE_BINARY_DIR}/test_input.ll COPYONLY)
