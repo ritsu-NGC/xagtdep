@@ -1,0 +1,262 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+
+\begin{document}
+
+\title{Reconstructable Gate Grouping and Priority-Cut Node Sharing for
+Reversible Pebbling of Boolean Networks}
+
+\author{\IEEEauthorblockN{Coding Agent Summary Report}
+\IEEEauthorblockA{Generated from \texttt{pebbling\_solver.py}}}
+
+\maketitle
+
+\begin{abstract}
+We describe the current gate-grouping and node-sharing algorithms of a
+Z3-based reversible-pebbling framework over Boolean logic DAGs. Building
+on a prior topological, contiguous-range gate-grouping scheme, we
+identify and fix a second structural defect -- a gate whose boundary
+outputs mix a genuine primary output with a merely-shared intermediate
+value can never release that intermediate's qubit, since primary-output
+gates never uncompute. We introduce a group-splitting pass that
+restores correctness while preserving the acyclicity guarantee, and we
+correspondingly fix the qubit-reclamation policy so that gate-internal
+(dirty) values are freed eagerly rather than deferred to an uncompute
+event that may never occur. We further describe a priority-cut-style
+node-sharing scheme for Reed-Muller (ANF) network synthesis, which
+generalizes simple exact-prefix caching to genuine subset-cut reuse
+across monomials and across output functions.
+\end{abstract}
+
+\section{Recap: Topological Contiguous-Range Grouping}
+
+Let $G=(V,E)$ be a combinational Boolean network DAG with primary
+inputs $V_{PI}$, primary outputs $O\subseteq V$, and node list
+$v_1,\dots,v_n$ maintained in topological order. A gate grouping
+partitions the non-input nodes into groups $G_1,\dots,G_m$, each
+required to be a contiguous range $\{v_{\ell_i},\dots,v_{r_i}\}$ of
+this order. As established previously, any contiguous range of a
+topological order is automatically convex, which in turn guarantees the
+induced gate-dependency graph $\widehat G$ is acyclic, since
+$\widehat G$ then does nothing more than reflect $G$'s own topological
+order.
+
+For each group $G_i$, boundary computation classifies every owned node
+$v\in G_i$ as an \emph{output} (if $v\in O$ or some fanout of $v$ lies
+outside $G_i$) or \emph{internal} (otherwise), and collects
+$\mathrm{inputs}(G_i)$ as the set of external fanins consumed by $G_i$.
+Gate-level dependencies are derived directly from
+$\mathrm{inputs}(G_i)$ against node ownership.
+
+\section{The Mixed-PO-Group Defect}
+
+\texttt{GatePebbleSolver} requires any gate owning at least one genuine
+primary output node (a member of $O$) to remain pebbled -- i.e.\
+$p_{g,K}=\mathrm{true}$ -- for the remainder of the schedule. Such a
+gate therefore never executes an \texttt{uncompute\_gate} transition.
+
+This becomes a correctness defect when a single group's output set
+$\mathrm{outputs}(G_i)$ contains \emph{both} a genuine PO node and a
+non-PO output node -- a value that is merely consumed by a node in a
+different, later group (a common occurrence once cut sharing lets a
+monomial subexpression feed more than one output cone). The non-PO
+output's qubit is allocated when $G_i$ computes, but the ONLY place a
+non-PO output's qubit is released is $G_i$'s own
+\texttt{uncompute\_gate} event -- which, if $G_i$ also owns a PO, never
+occurs. The qubit therefore leaks permanently, which manifests as a
+failed end-of-schedule liveness assertion:
+\begin{equation}
+\exists\, q:\ q \in \mathrm{live}(K) \ \wedge\ \mathrm{owner}(q) \notin O.
+\end{equation}
+
+\subsection{Fix: Mixed-PO Group Splitting}
+
+We introduce a post-boundary-computation pass,
+\texttt{\_split\_mixed\_po\_groups}, enforcing the invariant
+\begin{equation}
+\forall i:\quad
+\big(\mathrm{outputs}(G_i)\cap O \ne \emptyset\big)
+\;\Rightarrow\;
+\mathrm{outputs}(G_i)\subseteq O.
+\end{equation}
+That is, a group's outputs are either entirely genuine primary outputs,
+or contain no primary output at all -- never a mixture.
+
+For any group violating this invariant, let $j^\ast$ be the largest
+index (in the group's own node order) of a non-PO output node. The
+group's owned-node list is split at $j^\ast$: nodes
+$v_{\ell_i},\dots,v_{j^\ast}$ become an earlier group, and the
+remainder $v_{j^\ast+1},\dots,v_{r_i}$ become a later group. Because
+every group is a contiguous range and a sub-range of a contiguous range
+is itself contiguous, this operation preserves convexity -- and
+therefore acyclicity of $\widehat G$ -- without any additional search.
+Boundaries and the invariant check are then recomputed; this repeats to
+a fixed point, guaranteed to terminate since each split strictly
+increases the group count while the total node count is fixed.
+
+\begin{algorithm}
+\caption{Mixed-PO group splitting (fixed point)}
+\label{alg:splitmixed}
+\begin{algorithmic}[1]
+\Require groups $G_1,\dots,G_m$ (contiguous ranges); PO set $O$
+\Ensure no group's outputs mix a PO with a non-PO output
+\Repeat
+  \State recompute $\mathrm{outputs}(G_i)$, $\mathrm{internal}(G_i)$, $\mathrm{inputs}(G_i)$ for all $i$
+  \State $changed \gets \mathrm{false}$
+  \For{each group $G_i$}
+    \State $P \gets \mathrm{outputs}(G_i)\cap O$; \quad $N \gets \mathrm{outputs}(G_i)\setminus O$
+    \If{$P \ne \emptyset$ \textbf{and} $N \ne \emptyset$}
+      \State $j^\ast \gets$ index of last node in $N$ (by group order)
+      \State split $G_i$'s node list at $j^\ast$ into two contiguous groups
+      \State $changed \gets \mathrm{true}$
+    \EndIf
+  \EndFor
+\Until{$changed = \mathrm{false}$}
+\end{algorithmic}
+\end{algorithm}
+
+A defensive check, \texttt{\_validate\_no\_mixed\_po\_groups}, re-scans
+the final grouping and raises if the invariant is somehow still
+violated, guarding against regressions in the splitting logic itself.
+
+\section{Qubit Reclamation Policy}
+
+A second, related defect existed independently in qubit assignment.
+Internal (dirty) nodes of a group are, by definition, values consumed
+only within their own owning gate's compute step -- never by anything
+outside the group. An earlier revision freed such nodes only at their
+owning gate's \texttt{uncompute\_gate} event, which -- for exactly the
+same reason as above -- never fires for a PO-owning gate, silently
+leaking every internal ancilla qubit that gate ever used.
+
+The corrected policy frees internal nodes \emph{eagerly}, immediately
+after the owning gate's own \texttt{compute\_gate} step, rather than
+deferring to its (possibly nonexistent) uncompute event:
+\begin{equation}
+\forall v \in \mathrm{internal}(G_i):\quad
+t_{\mathrm{free}}(v) = t_{\mathrm{compute}}(G_i),
+\end{equation}
+in contrast to output nodes, whose qubits are released at
+$t_{\mathrm{uncompute}}(G_i)$ if and only if $v\notin O$, and never
+released if $v\in O$. With the mixed-PO-group invariant from
+Section~III in place, a group with any non-PO output is now guaranteed
+to eventually execute \texttt{uncompute\_gate}, making this release
+path reachable in all cases where it is required.
+
+\section{Updated Constraint Summary}
+
+The Z3 encodings themselves are unchanged from the prior revision;
+only the classical (non-Z3) construction and post-processing of gate
+groups is affected. For completeness, the gate-level clause families
+remain:
+
+\paragraph{Initial and final clauses.}
+\begin{equation}
+\bigwedge_{g} \bar p_{g,0}
+\;\wedge\;
+\bigwedge_{g:\ \mathrm{outputs}(g)\cap O\ne\emptyset} p_{g,K}
+\;\wedge\;
+\bigwedge_{g:\ \mathrm{outputs}(g)\cap O=\emptyset} \bar p_{g,K}.
+\end{equation}
+
+\paragraph{Move clauses.}
+\begin{equation}
+\bigwedge_{i=1}^{K}\;\bigwedge_{g}\;\bigwedge_{h\in\mathrm{depends\_on}(g)}
+\Big(\big(p_{g,i}\oplus p_{g,i+1}\big) \rightarrow
+\big(p_{h,i}\wedge p_{h,i+1}\big)\Big).
+\end{equation}
+
+\paragraph{Cardinality clauses.}
+\begin{equation}
+\bigwedge_{i}\Big(\sum_{g:\ \mathrm{counts}(g)} p_{g,i} \le P\Big),
+\end{equation}
+where $\mathrm{counts}(g)$ excludes groups whose owned nodes are all
+XOR nodes. With the Section III fix, the final-clause partition above
+is now well-defined without ambiguity: every group falls cleanly into
+exactly one of the two final-condition classes, since no group can
+straddle both by owning a mixture of PO and non-PO outputs.
+
+\section{Priority-Cut Node Sharing for Reed-Muller Synthesis}
+
+The prior Reed-Muller network builder shared AND-chain nodes only when
+two monomials happened to share an exact variable-index \emph{prefix}
+(e.g.\ $(0,1,2)$ and $(0,1,2,3)$), and only within a single fixed
+extension order. We generalize this to a priority-cut-style scheme,
+mirroring the cut-based technology mapping used in tools such as ABC.
+
+Each monomial is treated as a target variable set
+$M\subseteq\{0,\dots,n-1\}$ to be realized as a chain of 2-input AND
+gates. Rather than only checking $M$ itself against a cache, we search
+the cache of \emph{all} previously constructed subset-AND nodes for a
+usable \emph{cut}:
+\begin{equation}
+C^\ast = \arg\max_{C \in \mathcal{S},\ C \subsetneq M}
+\big(|C|,\ \mathrm{reuse}(C)\big),
+\end{equation}
+where $\mathcal S$ is the set of all cached subset keys, ties are
+broken lexicographically by the pair, and $\mathrm{reuse}(C)$ counts
+how many times $C$ has previously been selected as a cut (favoring
+concentration of reuse onto already-popular subexpressions, a proxy for
+priority-cut mapping's area/depth-driven cut selection). If no proper
+subset is cached, a single variable is used as the seed cut.
+
+The remaining variables $M\setminus C^\ast$ are then appended one at a
+time as a chain of 2-input AND gates, with every newly created
+intermediate subset registered in the cache under its own frozenset
+key -- making it available as a cut candidate for any subsequent
+monomial, whether from the same output function or a different one.
+Monomials are processed largest-first (by $|M|$) so that large,
+information-rich cuts are registered in the cache before smaller
+monomials search it, which empirically improves sharing yield.
+
+\begin{algorithm}
+\caption{Priority-cut AND-node construction for a monomial}
+\label{alg:pcutand}
+\begin{algorithmic}[1]
+\Require monomial variable set $M$; subset cache $\mathcal S$ (fs $\to$ Node)
+\Ensure Node realizing $\bigwedge_{i\in M} x_i$, with cache updated
+\If{$M = \emptyset$} \Return \texttt{const1} \EndIf
+\If{$M \in \mathcal S$} \Return $\mathcal S[M]$ \EndIf
+\State $C^\ast \gets \arg\max_{C\in\mathcal S,\ C\subsetneq M} (|C|, \mathrm{reuse}(C))$
+\If{no such $C^\ast$ exists}
+  \State $C^\ast \gets \{\min(M)\}$ \Comment{seed with a single variable}
+\EndIf
+\State $\mathrm{reuse}(C^\ast) \mathrel{+}= 1$
+\State $cur \gets C^\ast$; $node \gets \mathcal S[C^\ast]$
+\For{$v \in \mathrm{sorted}(M \setminus C^\ast)$}
+  \State $next \gets cur \cup \{v\}$
+  \If{$next \in \mathcal S$}
+    \State $node \gets \mathcal S[next]$; $\mathrm{reuse}(next) \mathrel{+}= 1$
+  \Else
+    \State $node \gets \mathrm{AND}(node, x_v)$; \quad $\mathcal S[next] \gets node$
+  \EndIf
+  \State $cur \gets next$
+\EndFor
+\State \Return $node$
+\end{algorithmic}
+\end{algorithm}
+
+Because cut matching is by exact subset (not merely a shared prefix),
+this scheme captures sharing opportunities the earlier prefix-chain
+cache missed entirely -- for instance, monomials $(0,1,3)$ and
+$(0,2,3)$ share no common prefix but both may usefully reuse a cached
+cut such as $\{0,3\}$ if it happens to have been constructed first.
+XOR reduction of an output's monomial terms continues to use
+unordered-pair identity caching, unchanged from the prior revision.
+
+\section{Conclusion}
+
+Two structural gaps in the gate-grouping and qubit-assignment pipeline
+-- mixed-PO output groups and deferred-instead-of-eager dirty-qubit
+reclamation -- have been closed, both without weakening the acyclicity
+guarantee established by contiguous-range grouping, since the fix in
+each case is a further, still-contiguous partition refinement rather
+than a change to the grouping topology itself. Separately, Reed-Muller
+network synthesis now supports genuine priority-cut-style subset
+sharing across monomials and across output functions, extending gate
+count reduction beyond what exact-prefix caching alone could capture.
+
+\end{document}
