@@ -64,7 +64,14 @@ target_include_directories(QCVerificationCommonObj PRIVATE
     ${CMAKE_SOURCE_DIR}/src/QC
 )
 target_link_libraries(QCVerificationCommonObj PRIVATE caterpillar mockturtle)
-
+add_executable(blif_to_tcount blif_to_tcount.cpp)
+target_link_libraries(blif_to_tcount caterpillar mockturtle)
+target_include_directories(blif_to_tcount PRIVATE
+    ${CMAKE_BINARY_DIR}/_deps/caterpillar-src/lib/lorina/lorina/include
+)
+set_target_properties(blif_to_tcount PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
 # Verification test — generates random XAGs and exports JSON for Python verification
 add_executable(QCVerificationTest
     QCVerificationTest.cpp
