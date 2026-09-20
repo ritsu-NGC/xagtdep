@@ -38,6 +38,31 @@ assigned to that node by `assign_qubits_to_pebbling`'s clean/dirty
 allocation policy, this module reuses that SAME qubit allocator so the
 two stay consistent -- gadget synthesis does not introduce its own
 separate notion of which qubit represents a node's value.
+
+======================================================================
+BUGFIX: Rule 4 was silently costing ZERO T-gates
+======================================================================
+`select_gadget_rule` in pebbling_solver.py picks Rule 4 for any node
+that is a primary output, feeds a PO's XOR, or has multiple fanouts.
+Random DAGs with many sink/PO nodes (e.g. `random_dag`, which makes
+EVERY sink a PO) can end up with most or even ALL of their AND-type
+gates routed to Rule 4.
+
+The previous `_gadget_ops_rule4` emitted a raw, un-decomposed
+`QOp("TOFFOLI", ...)` as a placeholder for the AND itself, followed
+only by two bookkeeping CNOTs for the ancilla. Since the T-counter
+(`run_caterpillar_experiments.py`'s `run_our_pipeline`) only counts
+QOps with kind "T"/"Tdg", that raw Toffoli placeholder contributed
+ZERO to the T-count -- even though a real Toffoli gate costs T gates
+once actually synthesized into Clifford+T. This made "ours-T" read as
+0 (or artificially low) for any network dominated by Rule-4 nodes,
+which is NOT a real T-count of 0 -- it's an uncounted placeholder.
+
+Fixed by replacing the raw TOFFOLI placeholder with the standard 7-T
+Toffoli decomposition (Nielsen & Chuang, Fig. 4.9: controls a, b,
+target f), keeping the original trailing `anc` bookkeeping CNOTs
+unchanged. This makes Rule 4's T-cost real and comparable to Rules
+1-3, and to caterpillar's own AND-gadget T-cost.
 """
 
 from pebbling_solver import (
@@ -107,8 +132,29 @@ def _gadget_ops_rule3(a, b, f):
 
 
 def _gadget_ops_rule4(a, b, f, anc):
+    # Standard 7-T/Tdg Toffoli decomposition (Nielsen & Chuang, Fig.
+    # 4.9): controls a, b, target f. Replaces the previous raw
+    # QOp("TOFFOLI", ...) placeholder, which was never expanded and so
+    # silently contributed zero to the T-count (see module docstring,
+    # "BUGFIX: Rule 4 was silently costing ZERO T-gates"). The trailing
+    # anc bookkeeping CNOTs are unchanged from the original gadget.
     return [
-        QOp("TOFFOLI", targets=[f], controls=[a, b]),
+        QOp("H", targets=[f]),
+        QOp("CNOT", targets=[f], controls=[b]),
+        QOp("Tdg", targets=[f]),
+        QOp("CNOT", targets=[f], controls=[a]),
+        QOp("T", targets=[f]),
+        QOp("CNOT", targets=[f], controls=[b]),
+        QOp("Tdg", targets=[f]),
+        QOp("CNOT", targets=[f], controls=[a]),
+        QOp("T", targets=[b]),
+        QOp("T", targets=[f]),
+        QOp("H", targets=[f]),
+        QOp("CNOT", targets=[b], controls=[a]),
+        QOp("T", targets=[a]),
+        QOp("Tdg", targets=[b]),
+        QOp("CNOT", targets=[b], controls=[a]),
+        # --- original ancilla bookkeeping, unchanged ---
         QOp("CNOT", targets=[anc], controls=[a]),
         QOp("CNOT", targets=[f], controls=[anc]),
     ]
@@ -206,6 +252,8 @@ def build_circuit_from_node_schedule(net, node_steps):
             b_fanin = node.fanins[1] if len(node.fanins) > 1 else None
 
             def resolve(fanin):
+                if fanin is None:
+                    return None
                 qs = _resolve_control_qubits(fanin, alloc.assignment)
                 if not qs:
                     raise RuntimeError(
@@ -279,6 +327,8 @@ def build_circuit_from_node_schedule(net, node_steps):
             b_fanin = node.fanins[1] if len(node.fanins) > 1 else None
 
             def resolve(fanin):
+                if fanin is None:
+                    return None
                 qs = _resolve_control_qubits(fanin, alloc.assignment)
                 return qs[-1] if qs else None
 

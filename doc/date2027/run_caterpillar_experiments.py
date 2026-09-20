@@ -8,27 +8,54 @@ IMPORTANT NOTE
 ======================================================================
 xagtdep does NOT expose a Python binding for caterpillar. Caterpillar
 is used exclusively from C++ (`caterpillar::logic_network_synthesis` +
-`xag_mapping_strategy`, mirrored from `test/RandomBooleanFunctionTest.cpp`).
+`xag_mapping_strategy`, plus `caterpillar::decompose_with_ands` to
+actually expand ANDs into their T-gate decomposition -- see
+test/blif_to_tcount.cpp).
 
 This harness shells out to a small companion C++ binary,
 `test/blif_to_tcount.cpp` (built as a CMake target in xagtdep), which:
-  1. parses a BLIF file with a hand-rolled reader (NOT
-     mockturtle::blif_reader -- that reader requires generic
-     ntk.create_node(), which xag_network does not implement),
+  1. parses a BLIF file with a hand-rolled reader,
   2. builds a mockturtle::xag_network directly via create_and/create_xor,
   3. runs `caterpillar::logic_network_synthesis` with
-     `xag_mapping_strategy` (the exact same call xagtdep's own
-     RandomBooleanFunctionTest.cpp already makes),
-  4. prints a single-line JSON object with gate/T-counts to stdout.
+     `xag_mapping_strategy`,
+  4. runs `caterpillar::decompose_with_ands` to expand each AND into
+     its actual Hadamard/T/CNOT synthesis sequence,
+  5. prints a single-line JSON object with gate/T-counts (including
+     "and_pos") to stdout.
 
 Build once, from the xagtdep repo root:
 
     cmake -B build
     cmake --build build -j$(nproc) --target blif_to_tcount
 
-Then point this script at it with --caterpillar-bin build/blif_to_tcount
-(path relative to wherever you run this script from). The shim takes the
-BLIF path as a bare positional argument -- no flags.
+Then point this script at it with --caterpillar-bin build/blif_to_tcount.
+
+======================================================================
+DIAGNOSTICS (--debug)
+======================================================================
+Pass --debug to print, for every DAG in the batch:
+  - the gate-group partition: group id, node names, and each node's
+    resolved gadget rule (1-5) and its per-node T/Tdg cost.
+  - the gate-LEVEL schedule: how many times each group id was toggled
+    (compute_gate / uncompute_gate events), from `gate_steps` (the
+    output of `pebble_gates`, BEFORE `expand_gate_schedule` unpacks it
+    into individual nodes).
+  - the node-LEVEL compute counts after `expand_gate_schedule`: how
+    many times each individual node was actually computed/uncomputed,
+    which is what really drives the total T-count (since a group's
+    toggle event pays for EVERY node in that group at once -- see
+    `expand_gate_schedule` in pebbling_solver.py).
+
+This was added to answer: "why is ours-T so much higher than the raw
+gate count suggests?" -- the total T-count is NOT simply
+(num_gate_level_toggles) x (some fixed per-toggle cost), because (a)
+gadget rules cost different amounts (Rule 1=4, Rule 3=6, Rule 4=7,
+Rule 5/XOR=0 T/Tdg gates; Rule 2 still contains an undecomposed raw
+TOFFOLI placeholder and its true cost is not yet consistently counted
+-- flagged here as a known open issue), and (b) each gate-level toggle
+fires EVERY node in that group at once, and groups can vary in size.
+Only the actual instrumented counts below can tell you whether the
+blowup is from group size, recomputation, or both.
 
 ======================================================================
 BLIF EXPORT
@@ -41,24 +68,28 @@ adds the missing WRITER (`write_blif`), producing a standard
   - 2-input XOR nodes  -> cover "01 1" / "10 1"
   - 1-input buffer/NOT nodes -> cover "1 1" (buffer) / "0 1" (NOT, when
     is_xor is set on a single-fanin node)
-These conventions match `_is_xor_cover` in pebbling_solver.py on read,
-so round-tripping through `read_blif(write_blif(net))` reproduces an
-equivalent network.
+These conventions match `_is_xor_cover` in pebbling_solver.py on read.
 
-NOTE: the 1-input buffer-vs-NOT interpretation (`is_xor` flag doubling
-as "invert" for single-fanin nodes) has NOT been verified against
-random_dag's actual generation logic -- check pebbling_solver.py's
-random_dag() if you need to confirm this before trusting T-counts on
-cases where 1-input nodes appear.
+NOTE: the 1-input buffer-vs-NOT interpretation has NOT been verified
+against random_dag's actual generation logic -- check
+pebbling_solver.py's random_dag() if you need to confirm this before
+trusting T-counts on cases where 1-input nodes appear.
 
 ======================================================================
-OUR OWN T-COUNT
+CATERPILLAR "CORRECTED" T-COUNT ESTIMATE
 ======================================================================
-For our side, we run the full existing pipeline:
-    build_gate_groups -> pebble_gates -> expand_gate_schedule
-    -> build_circuit_from_node_schedule (gate_schedule_to_circuit.py)
-and count `QOp`s with kind "T" or "Tdg" in the resulting
-`CircuitBuildResult.ops`.
+caterpillar's decompose_with_ands gives every internal AND's
+UNCOMPUTE step a "free" (0-T) pass whenever the exact same
+(control, control, target) triple was already computed earlier in the
+circuit. To estimate what the T-count WOULD be if every AND's
+uncompute cost the same as its compute, except output-driving ANDs
+(which need a full Toffoli, cost 7, instead of the relative-phase
+gadget, cost 4):
+
+    corrected_t = 2 * t_count - and_pos
+
+where `and_pos` (reported directly by blif_to_tcount.cpp) is the
+number of primary outputs whose driving node is itself an AND gate.
 """
 
 import argparse
@@ -68,6 +99,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 
 from pebbling_solver import (
     PebblingNetwork,
@@ -75,6 +107,7 @@ from pebbling_solver import (
     build_gate_groups,
     pebble_gates,
     expand_gate_schedule,
+    select_gadget_rule,
 )
 from reed_muller_priority_cuts import random_reed_muller_priority_cut_dag
 from gate_schedule_to_circuit import build_circuit_from_node_schedule
@@ -88,16 +121,8 @@ def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
     """
     Writes `net` out as a standard combinational BLIF file.
 
-    Supports:
-      - 2-input AND/XOR nodes (canonical covers recognized by
-        pebbling_solver._is_xor_cover on read).
-      - 1-input buffer/NOT nodes: `is_xor` on a single-fanin node is
-        treated as NOT (inverter); otherwise treated as a buffer
-        (identity). NOTE: this interpretation is unverified against
-        random_dag's actual semantics -- see module docstring.
-
-    Raises `ValueError` if any non-PI node has a fanin count other than
-    1 or 2.
+    Supports 2-input AND/XOR nodes and 1-input buffer/NOT nodes. Raises
+    `ValueError` if any non-PI node has a fanin count other than 1 or 2.
     """
     for n in net.nodes:
         if n.is_pi:
@@ -147,32 +172,21 @@ def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
 
 def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
     """
-    Runs `caterpillar_bin <blif_path>` (built from
-    test/blif_to_tcount.cpp) and parses its single-line JSON stdout.
-    No -i/--args flags -- the shim takes the BLIF path as a bare
-    positional argument.
-
-    Returns a dict:
-        {
-          "ok": bool,
-          "t_count": int or None,
-          "cnot_count": int or None,
-          "qubits": int or None,
-          "elapsed_s": float,
-          "error": str or None,
-        }
+    Runs `caterpillar_bin <blif_path>` and parses its single-line JSON
+    stdout. Returns a dict with t_count/cnot_count/qubits/and_pos/
+    corrected_t/elapsed_s/error/ok.
     """
     if not caterpillar_bin:
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": 0.0,
+            "and_pos": None, "corrected_t": None, "elapsed_s": 0.0,
             "error": "No --caterpillar-bin provided; skipped.",
         }
 
     if not os.path.isfile(caterpillar_bin) or not os.access(caterpillar_bin, os.X_OK):
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": 0.0,
+            "and_pos": None, "corrected_t": None, "elapsed_s": 0.0,
             "error": f"caterpillar binary not found or not executable: "
                      f"{caterpillar_bin}. Build test/blif_to_tcount.cpp first "
                      f"(cmake --build build --target blif_to_tcount).",
@@ -187,13 +201,13 @@ def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
     except subprocess.TimeoutExpired:
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": time.time() - start,
+            "and_pos": None, "corrected_t": None, "elapsed_s": time.time() - start,
             "error": f"caterpillar shim timed out after {timeout}s",
         }
     except OSError as e:
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": time.time() - start,
+            "and_pos": None, "corrected_t": None, "elapsed_s": time.time() - start,
             "error": f"failed to launch caterpillar shim: {e}",
         }
 
@@ -205,7 +219,7 @@ def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
     except (json.JSONDecodeError, ValueError):
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": elapsed,
+            "and_pos": None, "corrected_t": None, "elapsed_s": elapsed,
             "error": (
                 f"caterpillar shim produced non-JSON stdout (exit "
                 f"{proc.returncode}): stdout={raw!r} stderr={proc.stderr!r}"
@@ -215,25 +229,118 @@ def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
     if not payload.get("ok"):
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
-            "elapsed_s": elapsed,
+            "and_pos": None, "corrected_t": None, "elapsed_s": elapsed,
             "error": payload.get("error", "unknown error from caterpillar shim"),
         }
 
+    t_count = payload.get("t_count")
+    and_pos = payload.get("and_pos")
+    corrected_t = (
+        2 * t_count - and_pos
+        if (t_count is not None and and_pos is not None)
+        else None
+    )
+
     return {
         "ok": True,
-        "t_count": payload.get("t_count"),
+        "t_count": t_count,
         "cnot_count": payload.get("cnot_count"),
         "qubits": payload.get("qubits"),
+        "and_pos": and_pos,
+        "corrected_t": corrected_t,
         "elapsed_s": elapsed,
         "error": None,
     }
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics: gate-group composition, gate-level toggles, node-level
+# compute counts. See module docstring, "DIAGNOSTICS (--debug)".
+# ---------------------------------------------------------------------------
+
+_RULE_T_COST = {
+    1: 4,
+    2: None,  # unresolved: still contains an undecomposed raw TOFFOLI
+              # placeholder in gate_schedule_to_circuit.py's
+              # _gadget_ops_rule2 -- true cost not yet consistently counted.
+    3: 6,
+    4: 7,
+    5: 0,  # XOR
+}
+
+
+def print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps):
+    """
+    Prints, for a single DAG:
+      - gate-group composition (nodes, resolved rule, per-node T cost)
+      - gate-level toggle counts (compute_gate/uncompute_gate per gid,
+        straight from `gate_steps` -- BEFORE node expansion)
+      - node-level compute/uncompute counts (AFTER `expand_gate_schedule`
+        unpacks groups into individual nodes)
+    """
+    children = net.build_children()
+
+    print(f"\n{'=' * 100}")
+    print(f"[debug] Pipeline diagnostics for: {label}")
+    print(f"{'=' * 100}")
+
+    print(f"\n[debug] Gate groups ({len(gates)} total):")
+    for g in gates:
+        node_descr = []
+        for n in g.nodes:
+            if n.is_xor:
+                rule = 5
+            else:
+                rule = select_gadget_rule(n, net, children)
+            cost = _RULE_T_COST.get(rule)
+            cost_str = str(cost) if cost is not None else "UNRESOLVED"
+            node_descr.append(f"{n.name}(rule={rule},T={cost_str})")
+        print(f"  Gate {g.gid} [{len(g.nodes)} node(s)]: {', '.join(node_descr)}")
+
+    gate_toggle_counts = Counter()
+    gate_toggle_kinds = {}
+    for (_k, gid, op, _tag) in gate_steps:
+        gate_toggle_counts[gid] += 1
+        gate_toggle_kinds.setdefault(gid, []).append(op)
+
+    print(f"\n[debug] Gate-LEVEL toggle counts ({len(gate_steps)} total events):")
+    for g in gates:
+        count = gate_toggle_counts.get(g.gid, 0)
+        kinds = gate_toggle_kinds.get(g.gid, [])
+        print(f"  Gate {g.gid}: {count} toggle(s) -> {kinds}")
+
+    node_compute_counts = Counter()
+    node_uncompute_counts = Counter()
+    for n, action in node_steps:
+        if n.is_pi:
+            continue
+        if action == "compute":
+            node_compute_counts[n.name] += 1
+        else:
+            node_uncompute_counts[n.name] += 1
+
+    print(f"\n[debug] Node-LEVEL compute/uncompute counts "
+          f"({len(node_steps)} total node-events):")
+    all_names = sorted(set(node_compute_counts) | set(node_uncompute_counts))
+    for name in all_names:
+        c = node_compute_counts.get(name, 0)
+        u = node_uncompute_counts.get(name, 0)
+        flag = "  <-- recomputed!" if c > 1 else ""
+        print(f"  {name}: compute x{c}, uncompute x{u}{flag}")
+
+    total_toggles = sum(gate_toggle_counts.values())
+    total_node_events = len(node_steps)
+    print(f"\n[debug] Summary: {len(gates)} groups, {total_toggles} gate-level "
+          f"toggle(s), {total_node_events} node-level event(s) "
+          f"(avg {total_node_events / total_toggles:.2f} node-events per "
+          f"toggle, reflecting group size)." if total_toggles else "")
+
+
+# ---------------------------------------------------------------------------
 # Our own pipeline: gate groups -> pebbling -> circuit -> T-count
 # ---------------------------------------------------------------------------
 
-def run_our_pipeline(net, max_pebbles=None, max_steps="auto"):
+def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label=""):
     """
     Runs build_gate_groups -> pebble_gates -> expand_gate_schedule ->
     build_circuit_from_node_schedule on `net`, and returns:
@@ -245,6 +352,9 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto"):
           "elapsed_s": float,
           "error": str or None,
         }
+
+    If `debug` is True, prints gate-group/toggle/node-event diagnostics
+    (see `print_pipeline_diagnostics`) before returning.
     """
     if max_pebbles is None:
         num_gates_estimate = len(net.nodes) - len(net.pis)
@@ -258,6 +368,10 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto"):
             verbose=False,
         )
         node_steps = expand_gate_schedule(gates, gate_steps)
+
+        if debug:
+            print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps)
+
         circuit_result = build_circuit_from_node_schedule(net, node_steps)
     except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
         return {
@@ -342,9 +456,8 @@ def main():
                               "(default: a fresh temp dir).")
     parser.add_argument(
         "--caterpillar-bin", default=None,
-        help="Path to the built test/blif_to_tcount shim (see module "
-             "docstring for build instructions). If omitted, caterpillar "
-             "comparisons are skipped and only our own T-count is reported."
+        help="Path to the built test/blif_to_tcount shim. If omitted, "
+             "caterpillar comparisons are skipped."
     )
     parser.add_argument("--timeout", type=float, default=120.0,
                          help="Per-DAG timeout (seconds) for the "
@@ -352,6 +465,13 @@ def main():
     parser.add_argument("--keep-blif", action="store_true",
                          help="Don't delete the temp dir with generated "
                               ".blif files after the run.")
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Print gate-group composition, gate-level toggle counts, and "
+             "node-level compute/uncompute counts for OUR pipeline, per "
+             "DAG. Use this to see exactly why ours-T is what it is -- "
+             "see module docstring, 'DIAGNOSTICS (--debug)'."
+    )
     args = parser.parse_args()
 
     out_dir = args.out_dir
@@ -384,11 +504,14 @@ def main():
                     "num_pis": len(net.pis), "num_pos": len(net.pos),
                     "num_gates": len(net.nodes) - len(net.pis),
                     "our_t_count": None, "our_error": f"BLIF export failed: {e}",
-                    "cat_t_count": None, "cat_error": None,
+                    "cat_t_count": None, "cat_and_pos": None,
+                    "cat_corrected_t": None, "cat_error": None,
                 })
                 continue
 
-            our = run_our_pipeline(net, max_pebbles=args.max_pebbles)
+            our = run_our_pipeline(
+                net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+            )
             cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
             rows.append({
@@ -403,16 +526,19 @@ def main():
                 "our_error": our["error"],
                 "cat_t_count": cat["t_count"],
                 "cat_qubits": cat["qubits"],
+                "cat_and_pos": cat["and_pos"],
+                "cat_corrected_t": cat["corrected_t"],
                 "cat_elapsed_s": cat["elapsed_s"],
                 "cat_error": cat["error"],
             })
 
-    print("\n" + "=" * 100)
+    print("\n" + "=" * 110)
     print("RESULTS")
-    print("=" * 100)
+    print("=" * 110)
     header = (
         f"{'label':32s} {'kind':12s} {'pis':>4s} {'pos':>4s} {'gates':>6s} "
-        f"{'ours-T':>7s} {'ours-q':>7s} {'cat-T':>6s} {'cat-q':>6s}"
+        f"{'ours-T':>7s} {'ours-q':>7s} {'cat-T':>6s} {'cat-q':>6s} "
+        f"{'and_pos':>8s} {'corr-T':>7s}"
     )
     print(header)
     print("-" * len(header))
@@ -422,10 +548,13 @@ def main():
         ours_q = str(r.get("our_qubits", "")) if r.get("our_qubits") is not None else "-"
         cat_t = str(r.get("cat_t_count")) if r.get("cat_t_count") is not None else "N/A"
         cat_q = str(r.get("cat_qubits")) if r.get("cat_qubits") is not None else "N/A"
+        and_pos = str(r.get("cat_and_pos")) if r.get("cat_and_pos") is not None else "N/A"
+        corr_t = str(r.get("cat_corrected_t")) if r.get("cat_corrected_t") is not None else "N/A"
         print(
             f"{r['label']:32s} {r['kind']:12s} {r['num_pis']:>4d} "
             f"{r['num_pos']:>4d} {r['num_gates']:>6d} "
-            f"{ours_t:>7s} {ours_q:>7s} {cat_t:>6s} {cat_q:>6s}"
+            f"{ours_t:>7s} {ours_q:>7s} {cat_t:>6s} {cat_q:>6s} "
+            f"{and_pos:>8s} {corr_t:>7s}"
         )
         if r.get("our_error"):
             print(f"    [ours error] {r['our_error']}")
@@ -437,9 +566,9 @@ def main():
         if r.get("our_t_count") is not None and r.get("cat_t_count") is not None
     ]
     if valid:
-        print("\n" + "-" * 100)
+        print("\n" + "-" * 110)
         print("SUMMARY (only rows with both T-counts available)")
-        print("-" * 100)
+        print("-" * 110)
         total_ours = sum(r["our_t_count"] for r in valid)
         total_cat = sum(r["cat_t_count"] for r in valid)
         print(f"DAGs compared:             {len(valid)}")
@@ -451,6 +580,27 @@ def main():
             delta = r["our_t_count"] - r["cat_t_count"]
             print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
                   f"caterpillar={r['cat_t_count']:<6d} delta={delta:+d}")
+
+        valid_corrected = [r for r in valid if r.get("cat_corrected_t") is not None]
+        if valid_corrected:
+            print("\n" + "-" * 110)
+            print("SUMMARY (corrected caterpillar T-count: "
+                  "2*t_count - and_pos, see module docstring)")
+            print("-" * 110)
+            total_corrected = sum(r["cat_corrected_t"] for r in valid_corrected)
+            print(f"Total corrected caterpillar T-count: {total_corrected}")
+            if total_corrected > 0:
+                total_ours_corrected_set = sum(
+                    r["our_t_count"] for r in valid_corrected
+                )
+                print(f"Ours / corrected-caterpillar ratio:  "
+                      f"{total_ours_corrected_set / total_corrected:.3f}")
+            for r in valid_corrected:
+                delta = r["our_t_count"] - r["cat_corrected_t"]
+                print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
+                      f"corrected_cat={r['cat_corrected_t']:<6d} "
+                      f"(raw_cat={r['cat_t_count']}, and_pos={r['cat_and_pos']}) "
+                      f"delta={delta:+d}")
     else:
         print("\nNo rows had both T-counts available -- nothing to summarize. "
               "Pass --caterpillar-bin to enable the comparison.")
