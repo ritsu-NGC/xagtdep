@@ -452,7 +452,13 @@ def expand_epfl_benchmark_names(names):
     if not names:
         return []
     if "all" in names:
-        return list(EPFL_BENCHMARK_ORDER)
+        requested = list(EPFL_BENCHMARK_ORDER)
+        requested_set = set(requested)
+        for name in names:
+            if name == "all" or name in requested_set:
+                continue
+            requested.append(name)
+        return requested
     return names
 
 def generate_dags(num_dags, num_pis, num_gates, num_outputs, seed_base, kind):
