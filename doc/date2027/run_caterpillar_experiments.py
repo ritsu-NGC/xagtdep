@@ -1,7 +1,8 @@
 """
 Experiment harness: compares T-count between this project's gate-level
 pebbling + gadget-synthesis pipeline and gmeuli/caterpillar (via
-xagtdep's C++ integration), on a batch of randomly generated DAGs.
+xagtdep's C++ integration), on a batch of randomly generated DAGs and/or
+checked-in EPFL combinational benchmark BLIFs.
 
 ======================================================================
 IMPORTANT NOTE
@@ -29,6 +30,18 @@ Build once, from the xagtdep repo root:
     cmake --build build -j$(nproc) --target blif_to_tcount
 
 Then point this script at it with --caterpillar-bin build/blif_to_tcount.
+
+Examples:
+
+    python run_caterpillar_experiments.py \
+        --epfl-benchmarks all \
+        --caterpillar-bin build/blif_to_tcount
+
+    python run_caterpillar_experiments.py \
+        --epfl-benchmarks adder max sqrt \
+        --kinds random \
+        --num-dags 3 \
+        --caterpillar-bin build/blif_to_tcount
 
 ======================================================================
 DIAGNOSTICS (--debug)
@@ -107,6 +120,7 @@ from pebbling_solver import (
     build_gate_groups,
     pebble_gates,
     expand_gate_schedule,
+    read_blif,
     select_gadget_rule,
 )
 from reed_muller_priority_cuts import random_reed_muller_priority_cut_dag
@@ -399,6 +413,54 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
 # DAG generation for the experiment batch
 # ---------------------------------------------------------------------------
 
+EPFL_BENCHMARKS = {
+    "arithmetic": [
+        "adder", "bar", "div", "hyp", "max",
+        "multiplier", "sin", "sqrt", "square",
+    ],
+    "random_control": [
+        "arbiter", "cavlc", "ctrl", "dec", "i2c",
+        "int2float", "mem_ctrl", "priority", "router", "voter",
+    ],
+}
+
+EPFL_BENCHMARK_ORDER = [
+    *EPFL_BENCHMARKS["arithmetic"],
+    *EPFL_BENCHMARKS["random_control"],
+]
+
+
+def default_epfl_blif_dir():
+    return "epfl_blif"
+
+
+def resolve_epfl_blif_dir(path):
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), path))
+
+
+def resolve_epfl_blif_path(root_dir, name):
+    for category in ("arithmetic", "random_control"):
+        candidate = os.path.join(root_dir, category, f"{name}.blif")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def expand_epfl_benchmark_names(names):
+    if not names:
+        return []
+    if "all" in names:
+        requested = list(EPFL_BENCHMARK_ORDER)
+        requested_set = set(requested)
+        for name in names:
+            if name == "all" or name in requested_set:
+                continue
+            requested.append(name)
+        return requested
+    return names
+
 def generate_dags(num_dags, num_pis, num_gates, num_outputs, seed_base, kind):
     """
     Yields (label, PebblingNetwork) pairs.
@@ -436,13 +498,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="Compare T-count between this project's gate-level "
                     "pebbling pipeline and gmeuli/caterpillar (via "
-                    "xagtdep's C++ integration) on random DAGs."
+                    "xagtdep's C++ integration) on random DAGs and/or checked-in "
+                    "EPFL benchmark BLIF files."
     )
     parser.add_argument("--num-dags", type=int, default=5,
                          help="Number of random DAGs to generate per kind.")
-    parser.add_argument("--kinds", nargs="+", default=["random", "reed_muller"],
+    parser.add_argument("--kinds", nargs="*",
                          choices=["random", "reed_muller"],
-                         help="Which DAG generators to include in the batch.")
+                         help="Which synthetic DAG generators to include.")
+    parser.add_argument(
+                    "--epfl-benchmarks", nargs="+", default=None,
+                    help="Checked-in EPFL BLIF benchmarks to include by circuit name, "
+                         "or 'all' for all 19."
+    )
+    parser.add_argument(
+                    "--epfl-blif-dir", default=default_epfl_blif_dir(),
+                    help="Root directory containing arithmetic/ and random_control/ "
+                         "EPFL BLIF subdirectories (relative paths are resolved from "
+                         "this script's directory)."
+    )
     parser.add_argument("--num-pis", type=int, default=4)
     parser.add_argument("--num-gates", type=int, default=8,
                          help="Used only for --kinds random.")
@@ -474,6 +548,13 @@ def main():
     )
     args = parser.parse_args()
 
+    requested_kinds = args.kinds or []
+    requested_epfl = expand_epfl_benchmark_names(args.epfl_benchmarks)
+    if not requested_kinds and not requested_epfl:
+        parser.error("must request at least one input set via --kinds and/or "
+                     "--epfl-benchmarks")
+    epfl_blif_dir = resolve_epfl_blif_dir(args.epfl_blif_dir)
+
     out_dir = args.out_dir
     cleanup_dir = False
     if out_dir is None:
@@ -490,7 +571,7 @@ def main():
 
     rows = []
 
-    for kind in args.kinds:
+    for kind in requested_kinds:
         for label, net in generate_dags(
             args.num_dags, args.num_pis, args.num_gates, args.num_outputs,
             args.seed_base, kind,
@@ -531,6 +612,76 @@ def main():
                 "cat_elapsed_s": cat["elapsed_s"],
                 "cat_error": cat["error"],
             })
+
+    for label in requested_epfl:
+        blif_path = resolve_epfl_blif_path(epfl_blif_dir, label)
+        if blif_path is None:
+            rows.append({
+                "label": label,
+                "kind": "epfl",
+                "num_pis": 0,
+                "num_pos": 0,
+                "num_gates": 0,
+                "our_t_count": None,
+                "our_qubits": None,
+                "our_elapsed_s": None,
+                "our_error": (
+                    f"BLIF export failed: EPFL benchmark '{label}' not found under "
+                    f"{epfl_blif_dir}"
+                ),
+                "cat_t_count": None,
+                "cat_qubits": None,
+                "cat_and_pos": None,
+                "cat_corrected_t": None,
+                "cat_elapsed_s": None,
+                "cat_error": None,
+            })
+            continue
+
+        try:
+            net = read_blif(blif_path)
+        except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
+            rows.append({
+                "label": label,
+                "kind": "epfl",
+                "num_pis": 0,
+                "num_pos": 0,
+                "num_gates": 0,
+                "our_t_count": None,
+                "our_qubits": None,
+                "our_elapsed_s": None,
+                "our_error": f"BLIF export failed: {type(e).__name__}: {e}",
+                "cat_t_count": None,
+                "cat_qubits": None,
+                "cat_and_pos": None,
+                "cat_corrected_t": None,
+                "cat_elapsed_s": None,
+                "cat_error": None,
+            })
+            continue
+
+        our = run_our_pipeline(
+            net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+        )
+        cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
+
+        rows.append({
+            "label": label,
+            "kind": "epfl",
+            "num_pis": len(net.pis),
+            "num_pos": len(net.pos),
+            "num_gates": len(net.nodes) - len(net.pis),
+            "our_t_count": our["t_count"],
+            "our_qubits": our["qubit_count"],
+            "our_elapsed_s": our["elapsed_s"],
+            "our_error": our["error"],
+            "cat_t_count": cat["t_count"],
+            "cat_qubits": cat["qubits"],
+            "cat_and_pos": cat["and_pos"],
+            "cat_corrected_t": cat["corrected_t"],
+            "cat_elapsed_s": cat["elapsed_s"],
+            "cat_error": cat["error"],
+        })
 
     print("\n" + "=" * 110)
     print("RESULTS")
