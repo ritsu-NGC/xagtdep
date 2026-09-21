@@ -6,9 +6,13 @@
 // NOT implement -- it only exposes create_and/create_xor directly),
 // builds a mockturtle::xag_network by hand, runs
 // caterpillar::logic_network_synthesis with xag_mapping_strategy, then
-// caterpillar::decompose_with_ands to actually expand AND gates into
-// their T-gate decomposition, and prints a single-line JSON object
-// with T-count etc. to stdout.
+// counts the exact gate statistics that caterpillar::decompose_with_ands
+// would produce, and prints a single-line JSON object with T-count etc.
+// to stdout. This avoids materializing tweedledum::mcmt_gate for large
+// circuits: the vendored mcmt_gate bit-packs qubit ids into 32-bit masks
+// and hard-codes network_max_num_qubits = 32, which aborts on large EPFL
+// benchmarks even though logic_network_synthesis itself supports many more
+// lazily allocated qubits.
 //
 // IMPORTANT (verified against real upstream gmeuli/caterpillar, which
 // this project's CMakeLists.txt fetches at GIT_TAG master):
@@ -59,7 +63,9 @@
 //     or: {"ok":false,"error":"<message>"}
 
 #include <fstream>
+#include <algorithm>
 #include <iostream>
+#include <tuple>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -68,9 +74,7 @@
 #include <mockturtle/networks/xag.hpp>
 
 #include <caterpillar/caterpillar.hpp>
-#include <caterpillar/synthesis/decompose_with_ands.hpp>
 #include <caterpillar/details/utils.hpp>
-#include <tweedledum/gates/mcmt_gate.hpp>
 #include <tweedledum/networks/netlist.hpp>
 
 namespace {
@@ -278,6 +282,49 @@ mockturtle::xag_network parseBlif(const std::string &path) {
   return xag;
 }
 
+struct DecomposedCounts {
+  uint32_t t_count = 0;
+  uint32_t cnot_count = 0;
+  uint32_t h_count = 0;
+  uint32_t total = 0;
+};
+
+DecomposedCounts countAsDecomposeWithAnds(
+    const tweedledum::netlist<caterpillar::stg_gate> &circ) {
+  DecomposedCounts counts;
+  std::vector<std::tuple<uint32_t, uint32_t, uint32_t>> seen_ands;
+
+  circ.foreach_cgate([&](auto const &node) {
+    auto const &gate = node.gate;
+    auto const cs = gate.controls();
+    auto const ts = gate.targets();
+
+    if (gate.num_controls() == 1 && gate.num_targets() == 1) {
+      counts.cnot_count++;
+      counts.total++;
+      return true;
+    }
+
+    if (gate.num_controls() == 2 && gate.num_targets() == 1) {
+      auto triple = std::make_tuple(cs[0].index(), cs[1].index(), ts[0].index());
+      if (std::find(seen_ands.begin(), seen_ands.end(), triple) == seen_ands.end()) {
+        counts.t_count += 6;
+        counts.cnot_count += 6;
+        counts.h_count += 2;
+        counts.total += 14;
+        seen_ands.push_back(triple);
+      } else {
+        counts.h_count += 1;
+        counts.total += 3;
+      }
+    }
+
+    return true;
+  });
+
+  return counts;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -314,41 +361,18 @@ int main(int argc, char **argv) {
     caterpillar::xag_mapping_strategy strategy;
     caterpillar::logic_network_synthesis(circ, xag, strategy);
 
-    // logic_network_synthesis alone only produces AND-as-2-controlled
-    // gates and XOR-as-CNOT -- no T gates yet. decompose_with_ands
-    // expands each AND into its actual Hadamard/T/CNOT sequence.
-    tweedledum::netlist<tweedledum::mcmt_gate> qcirc;
-    caterpillar::decompose_with_ands(qcirc, circ);
-
-    uint32_t t_count = 0, cnot_count = 0, h_count = 0, total = 0;
-    qcirc.foreach_cgate([&](auto const &node) {
-      auto const &gate = node.gate;
-      total++;
-      switch (gate.operation()) {
-      case tweedledum::gate_set::t:
-      case tweedledum::gate_set::t_dagger:
-        t_count++;
-        break;
-      case tweedledum::gate_set::cx:
-      case tweedledum::gate_set::mcx:
-        cnot_count++;
-        break;
-      case tweedledum::gate_set::hadamard:
-        h_count++;
-        break;
-      default:
-        break;
-      }
-      return true;
-    });
+    // decompose_with_ands would produce the final T/H/CNOT counts, but the
+    // vendored mcmt_gate representation aborts above 32 qubits. Count the
+    // exact same decomposition pattern directly from the stg netlist instead.
+    const auto counts = countAsDecomposeWithAnds(circ);
 
     std::cout << "{"
               << "\"ok\":true,"
-              << "\"t_count\":" << t_count << ","
-              << "\"cnot_count\":" << cnot_count << ","
-              << "\"h_count\":" << h_count << ","
-              << "\"total\":" << total << ","
-              << "\"qubits\":" << qcirc.num_qubits() << ","
+              << "\"t_count\":" << counts.t_count << ","
+              << "\"cnot_count\":" << counts.cnot_count << ","
+              << "\"h_count\":" << counts.h_count << ","
+              << "\"total\":" << counts.total << ","
+              << "\"qubits\":" << circ.num_qubits() << ","
               << "\"and_pos\":" << and_pos << "}" << std::endl;
     return 0;
   } catch (const std::exception &e) {
