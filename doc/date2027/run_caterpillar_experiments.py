@@ -103,6 +103,21 @@ gadget, cost 4):
 
 where `and_pos` (reported directly by blif_to_tcount.cpp) is the
 number of primary outputs whose driving node is itself an AND gate.
+
+The "corrected" SUMMARY block reports two different aggregate views
+of ours-vs-corrected-caterpillar, and they answer different
+questions:
+  - "Ours / corrected-caterpillar ratio" divides the SUM of ours-T
+    across all valid rows by the SUM of corrected-caterpillar-T across
+    the same rows. This is dominated by whichever circuit(s) have the
+    largest absolute T-counts in the batch.
+  - "Average delta/corrected-cat ratio" instead computes, PER ROW,
+    (ours_t_count - corrected_t) / corrected_t, and then averages that
+    per-row ratio across all valid rows unweighted. This treats every
+    circuit equally regardless of its absolute size, so it's a better
+    read on "how does our overhead scale, on average, relative to
+    corrected caterpillar" without large circuits dominating the
+    aggregate the way the sum-of-sums ratio above does.
 """
 
 import argparse
@@ -746,6 +761,32 @@ def main():
                 )
                 print(f"Ours / corrected-caterpillar ratio:  "
                       f"{total_ours_corrected_set / total_corrected:.3f}")
+
+            # Per-row (delta / corrected_cat) ratio, averaged unweighted
+            # across all valid rows -- see module docstring,
+            # "CATERPILLAR 'CORRECTED' T-COUNT ESTIMATE", for how this
+            # differs from the sum-of-sums ratio above.
+            delta_ratios = [
+                (r["our_t_count"] - r["cat_corrected_t"]) / r["cat_corrected_t"]
+                for r in valid_corrected
+                if r["cat_corrected_t"] != 0
+            ]
+            skipped_zero_corrected = [
+                r for r in valid_corrected if r["cat_corrected_t"] == 0
+            ]
+            if delta_ratios:
+                avg_delta_ratio = sum(delta_ratios) / len(delta_ratios)
+                print(f"Average delta/corrected-cat ratio:  "
+                      f"{avg_delta_ratio:+.3f} "
+                      f"(mean of per-circuit (ours-T - corrected-cat-T) / "
+                      f"corrected-cat-T, unweighted across "
+                      f"{len(delta_ratios)} row(s))")
+            if skipped_zero_corrected:
+                skipped_labels = ", ".join(r["label"] for r in skipped_zero_corrected)
+                print(f"  (skipped {len(skipped_zero_corrected)} row(s) with "
+                      f"corrected-cat-T == 0 when averaging the ratio: "
+                      f"{skipped_labels})")
+
             for r in valid_corrected:
                 delta = r["our_t_count"] - r["cat_corrected_t"]
                 print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
