@@ -870,6 +870,18 @@ def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
     return groups
 
 
+def _pebble_cost(node):
+    """
+    Returns this node's Phase-1 contribution to the gate-group pebble
+    budget.
+
+    XOR nodes are hard-excluded (cost 0) because their synthesis rule is
+    ancilla-free. Future cost-weighted grouping should change non-XOR
+    costs here without ever letting XOR nodes contribute via a fallback.
+    """
+    return 0 if node.is_xor else 1
+
+
 def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
     """
     Gate-group construction algorithm. See module docstring for the
@@ -879,11 +891,13 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
          skipping PIs, and assign each non-PI node to the CURRENT group.
          Close the current group (start a fresh one) when:
            (a) the node is a primary output, or
-           (b) the number of non-XOR ("pebble-consuming") nodes placed
-               into the current group reaches `max_pebbles - 1`.
-         XOR nodes are added to the current group WITHOUT counting
-         against the pebble budget and without forcing a boundary,
-         since their gadget (CNOT cascade) needs no ancilla.
+           (b) the accumulated Phase-1 pebble cost of nodes placed into
+               the current group reaches `max_pebbles - 1`.
+         That per-node cost currently comes from `_pebble_cost(node)`,
+         which returns 0 for XOR nodes and 1 for every other non-PI
+         node. Future cost-aware grouping should continue to route all
+         such accounting through `_pebble_cost` so XOR nodes remain
+         hard-excluded from the budget.
 
       2. Boundary computation: for every group, inspect each owned
          node's ORIGINAL fanins/fanouts to classify it as `outputs`
@@ -934,20 +948,17 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
             continue
 
         current.nodes.append(node)
-
-        if node.is_xor:
-            # doesn't consume pebble budget, doesn't force a boundary
-            if node in pos_set:
-                finalize()
-                cur_pebble = 0
-            continue
+        node_cost = _pebble_cost(node)
 
         if node in pos_set:
             finalize()
             cur_pebble = 0
             continue
 
-        cur_pebble += 1
+        cur_pebble += node_cost
+        if node_cost == 0:
+            continue
+
         if max_pebbles <= 1:
             # max_pebbles == 1 (only ever valid if len(net.pos) <= 1):
             # every non-PI, non-XOR node must be its own group.
@@ -1160,6 +1171,11 @@ class GatePebbleSolver:
         def _is_xor_only(g):
             return len(g.nodes) > 0 and all(n.is_xor for n in g.nodes)
 
+        # This is a GROUP-level flag used by the PbLe constraint over
+        # whole-group state bits (`s_next[g.gid]`), not a per-node weight.
+        # Mixed groups still count toward the limit because their AND
+        # nodes do need ancilla; only groups composed entirely of XOR
+        # nodes are exempt.
         self.counts_toward_limit = {g.gid: not _is_xor_only(g) for g in gates}
         self.gate_deps = {g.gid: set(g.depends_on) for g in gates}
 
