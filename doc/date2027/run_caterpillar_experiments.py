@@ -118,6 +118,23 @@ questions:
     read on "how does our overhead scale, on average, relative to
     corrected caterpillar" without large circuits dominating the
     aggregate the way the sum-of-sums ratio above does.
+
+======================================================================
+PEBBLE BUDGET (auto-sizing and hard cap)
+======================================================================
+When `--max-pebbles` is omitted, `run_our_pipeline` auto-sizes the
+initial gate-level pebble budget to `2 * len(net.pos)`. This value is
+ALSO used as a HARD CAP (`max_pebbles_cap`) passed to `pebble_gates`,
+so `pebble_gates`'s own auto-escalation logic (which otherwise retries
+with `current_pebbles + 1` on every UNSAT/step-exhaustion, up to
+`len(gates)` by default) can no longer run away indefinitely on large
+circuits. If a circuit genuinely needs more than `2 * num_pos` pebbles
+to admit a feasible schedule within the step cap, `pebble_gates` now
+raises a `RuntimeError` for that row instead of climbing towards
+`len(gates)` (which can be very large on e.g. the bigger EPFL
+benchmarks and cause multi-minute/hanging Z3 searches). Pass an
+explicit `--max-pebbles` to override this for circuits that need a
+larger budget.
 """
 
 import argparse
@@ -384,17 +401,23 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
 
     If `debug` is True, prints gate-group/toggle/node-event diagnostics
     (see `print_pipeline_diagnostics`) before returning.
+
+    `max_pebbles` (if omitted) is auto-sized to `2 * len(net.pos)` and is
+    ALSO passed as a hard `max_pebbles_cap` to `pebble_gates`, so
+    `pebble_gates`'s own auto-escalation loop cannot run away toward
+    `len(gates)` on large circuits -- see module docstring, "PEBBLE
+    BUDGET".
     """
     if max_pebbles is None:
-        num_gates_estimate = len(net.nodes) - len(net.pis)
-        max_pebbles = max(len(net.pos), min(8, num_gates_estimate))
+        # Cap the pebble budget at 2x the number of primary outputs.
+        max_pebbles = max(1, len(net.pos) * 2)
 
     start = time.time()
     try:
         gates = build_gate_groups(net, max_pebbles=max_pebbles)
         gate_steps = pebble_gates(
             gates, max_pebbles=max_pebbles, max_steps=max_steps, net=net,
-            verbose=False,
+            verbose=False, max_pebbles_cap=max_pebbles,
         )
         node_steps = expand_gate_schedule(gates, gate_steps)
 
@@ -538,8 +561,15 @@ def main():
     parser.add_argument("--num-outputs", type=int, default=2,
                          help="Used only for --kinds reed_muller.")
     parser.add_argument("--seed-base", type=int, default=1000)
-    parser.add_argument("--max-pebbles", type=int, default=None,
-                         help="Pebble cap for OUR pipeline; auto-sized if omitted.")
+    parser.add_argument(
+        "--max-pebbles", type=int, default=None,
+        help="Pebble budget for OUR pipeline. If omitted, auto-sized to "
+             "2x the number of primary outputs; this value is ALSO used "
+             "as a HARD CAP on pebble_gates's internal auto-escalation "
+             "(pebble_gates will raise instead of escalating past this "
+             "value). Pass explicitly to allow a larger budget for "
+             "circuits that need it."
+    )
     parser.add_argument("--out-dir", default=None,
                          help="Directory to write .blif files into "
                               "(default: a fresh temp dir).")

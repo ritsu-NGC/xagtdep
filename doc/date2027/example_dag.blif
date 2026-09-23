@@ -1,0 +1,24 @@
+.model example_dag
+.inputs pi0 pi1 pi2 pi3
+.outputs n5 n10
+.names pi0 pi1 n1
+11 1
+.names pi2 pi3 n2
+11 1
+.names n1 pi2 n3
+11 1
+.names n1 n2 n4
+01 1
+10 1
+.names n3 n4 n5
+11 1
+.names n1 pi3 n6
+11 1
+.names n6 n2 n7
+11 1
+.names n7 pi0 n9
+11 1
+.names n9 pi1 n10
+01 1
+10 1
+.end

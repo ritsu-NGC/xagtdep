@@ -24,17 +24,22 @@ node. This can:
 
 The NEW approach (`build_gate_groups`, this file) instead:
   1. Assigns EVERY non-PI node to EXACTLY ONE gate group, by walking
-     nodes in topological order (which `net.nodes` already is) and
-     cutting group boundaries only at that point in the linear order.
-     A group is therefore always a CONTIGUOUS RANGE of the topological
-     order.
+     nodes in topological order (which `net.nodes` already is, or an
+     alternative valid topological order -- see "TOPOLOGICAL ORDER
+     CHOICE" below) and cutting group boundaries only at that point in
+     the linear order. A group is therefore always a CONTIGUOUS RANGE
+     of the topological order used.
   2. Proves (see accompanying .tex) that a contiguous range of a
      topological order is automatically CONVEX: if u, v are both in
      the range and w lies on some path u -> w -> v, then
      topo(u) < topo(w) < topo(v), and since u, v's topological indices
      already fall inside the range's [lo, hi) bounds, w's index must
      too -- so w is automatically a member of the same group. No
-     separate convexity search is required.
+     separate convexity search is required. Crucially, this argument
+     only uses the GENERIC topological-order property (for any edge
+     u -> w, topo(u) < topo(w)) -- it never assumes any SPECIFIC
+     topological order (such as creation order), so ANY valid
+     topological order preserves this guarantee.
   3. Computes each group's boundary (inputs/outputs) AFTER ownership is
      fixed, by inspecting the ORIGINAL fanin/fanout edges: a node is an
      "output" (clean pebble) of its group if it is a primary output OR
@@ -54,6 +59,49 @@ the union of all group-owned nodes (each retains its original
 `fanins`), and that `GatePebbleSolver`'s dependency graph can never
 contain a cycle that isn't already present in the original DAG (there
 are none, since it's a DAG).
+
+======================================================================
+TOPOLOGICAL ORDER CHOICE (`topo_order` parameter on `build_gate_groups`)
+======================================================================
+
+Phase 1's greedy pebble-budget fill walks nodes in SOME topological
+order and closes a group boundary once a fixed number of "pebble-
+consuming" (non-XOR) nodes have accumulated. Which nodes end up
+grouped together is therefore entirely a function of WHICH topological
+order is used -- not of any semantic notion of "these nodes belong
+together". With the network's default creation order, two nodes that
+happen to be created back-to-back (e.g. two independent AND gates each
+fed directly by primary inputs) can be grouped together purely by
+coincidence, even though neither depends on the other, while a node's
+own direct dependent ends up in a LATER group simply because it was
+created later.
+
+`topo_order` selects which topological order Phase 1 traverses:
+  - "creation" (default): use `net.nodes` as-is (today's original
+    behavior, unchanged, for full backward compatibility).
+  - "dependency_chain": use `_dependency_chain_topo_order(net)`
+    instead. This reorders nodes (still a VALID topological order --
+    convexity is preserved regardless, per the argument in point 2
+    above) using a "list scheduling with successor preference"
+    heuristic (also used in compiler instruction scheduling to
+    minimize register live-range overlap): after placing a node,
+    immediately place one of its own direct consumers next, if that
+    consumer just became "ready" (i.e. all of ITS non-PI fanins are
+    now placed) as a result. This chains genuinely DEPENDENT nodes
+    together in the traversal order, so Phase 1's greedy fill is far
+    more likely to group a producer with its actual consumer, instead
+    of an unrelated sibling that merely happens to sit nearby in
+    creation order.
+
+Neither option changes anything about Phases 2 through 4 (boundary
+computation, mixed-PO splitting, dependency derivation, validation) --
+they operate identically on whatever groups Phase 1 produces.
+
+NOTE: switching the DEFAULT to "dependency_chain" would change group
+membership (and therefore T-counts) for every existing DAG/benchmark
+that has already been measured with "creation" order. Re-run any
+existing T-count comparisons (e.g. run_caterpillar_experiments.py)
+after switching if you want directly comparable numbers.
 
 ======================================================================
 MIXED PO GROUPS (the bug this revision fixes)
@@ -882,14 +930,103 @@ def _pebble_cost(node):
     return 0 if node.is_xor else 1
 
 
-def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
+def _dependency_chain_topo_order(net: PebblingNetwork):
+    """
+    Computes an alternative valid topological order for `net.nodes`
+    that greedily prefers scheduling a node's DIRECT CONSUMER
+    immediately after it, whenever that consumer's other fanins are
+    already placed too ("ready") -- rather than the network's original
+    creation order.
+
+    CORRECTNESS NOTE: this does not weaken any guarantee in
+    `build_gate_groups`. The convexity proof (see module docstring) only
+    uses the generic topological-order property -- for any edge
+    u -> w, topo(u) < topo(w) -- and never anything specific to
+    creation order. Any valid topological order preserves convexity of
+    contiguous ranges. This function only changes WHICH nodes end up
+    adjacent, and therefore which nodes Phase 1's greedy pebble-budget
+    fill groups together.
+
+    Heuristic ("list scheduling with successor preference", also used
+    in compiler instruction scheduling to minimize live-range overlap):
+    after placing node `u`, if `u` has a direct consumer `w` whose
+    OTHER fanins are already placed (i.e. `w` just became "ready"
+    because of `u`), place `w` next. This chains genuinely DEPENDENT
+    nodes together, so a producer is much more likely to land in the
+    same contiguous group as its consumer, instead of an unrelated
+    sibling that merely happens to sit nearby in creation order.
+
+    Falls back to the earliest-ready node by creation order (stable,
+    deterministic) whenever no direct consumer of the just-placed node
+    is yet ready.
+    """
+    children = net.build_children()
+    creation_index = {n: i for i, n in enumerate(net.nodes)}
+
+    # IMPORTANT: count only NON-PI fanins here. PIs are already
+    # considered "placed" from the very start (see `placed` below) and
+    # never go through the decrement step in the main loop (only nodes
+    # actually popped from `ready` decrement their children's
+    # counters). If we counted PI fanins too, a node whose fanins are
+    # ALL PIs (e.g. a 2-input AND fed directly by two primary inputs)
+    # would never have its counter reach 0, `ready` would start empty,
+    # and the whole traversal would silently produce zero non-PI
+    # nodes.
+    remaining_fanins = {
+        n: sum(1 for f in n.fanins if not f.is_pi)
+        for n in net.nodes if not n.is_pi
+    }
+    placed = {n for n in net.nodes if n.is_pi}
+
+    ready = sorted(
+        (n for n, cnt in remaining_fanins.items() if cnt == 0),
+        key=lambda n: creation_index[n],
+    )
+
+    order = [n for n in net.nodes if n.is_pi]
+    last_placed = None
+
+    while ready:
+        chosen = None
+        if last_placed is not None:
+            candidates = sorted(
+                (ch for ch in children.get(last_placed, [])
+                 if ch not in placed and remaining_fanins.get(ch, -1) == 0),
+                key=lambda n: creation_index[n],
+            )
+            if candidates:
+                chosen = candidates[0]
+
+        if chosen is None:
+            chosen = ready[0]
+
+        ready.remove(chosen)
+        placed.add(chosen)
+        order.append(chosen)
+
+        for ch in children.get(chosen, []):
+            if ch.is_pi or ch in placed:
+                continue
+            remaining_fanins[ch] -= 1
+            if remaining_fanins[ch] == 0:
+                ready.append(ch)
+        ready.sort(key=lambda n: creation_index[n])
+
+        last_placed = chosen
+
+    return order
+
+
+def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="creation"):
     """
     Gate-group construction algorithm. See module docstring for the
     full rationale. Steps:
 
-      1. Partition: walk `net.nodes` (already topological) in order,
-         skipping PIs, and assign each non-PI node to the CURRENT group.
-         Close the current group (start a fresh one) when:
+      1. Partition: walk the network's nodes (in the topological order
+         selected by `topo_order` -- see module docstring, "TOPOLOGICAL
+         ORDER CHOICE") in order, skipping PIs, and assign each non-PI
+         node to the CURRENT group. Close the current group (start a
+         fresh one) when:
            (a) the node is a primary output, or
            (b) the accumulated Phase-1 pebble cost of nodes placed into
                the current group reaches `max_pebbles - 1`.
@@ -920,7 +1057,19 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
          topological order are always convex, see accompanying .tex),
          but is checked defensively here.
 
-    Raises `ValueError` if `max_pebbles < len(net.pos)`.
+    `topo_order`:
+      - "creation" (default): use `net.nodes` as-is, i.e. the order
+        nodes were created in (today's original behavior, unchanged).
+      - "dependency_chain": use `_dependency_chain_topo_order(net)`
+        instead, which reorders nodes (still a VALID topological
+        order -- convexity is preserved regardless) to keep
+        producer/consumer chains adjacent, so Phase 1's greedy
+        pebble-budget fill is more likely to group a node with its
+        actual dependents rather than an unrelated sibling. See module
+        docstring for details and a worked example.
+
+    Raises `ValueError` if `max_pebbles < len(net.pos)`, or if
+    `topo_order` is not one of the recognized values.
     """
     if max_pebbles < len(net.pos):
         raise ValueError(
@@ -931,6 +1080,16 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
         )
 
     pos_set = set(net.pos)
+
+    if topo_order == "creation":
+        traversal_order = net.nodes
+    elif topo_order == "dependency_chain":
+        traversal_order = _dependency_chain_topo_order(net)
+    else:
+        raise ValueError(
+            f"Unknown topo_order: {topo_order!r} "
+            f"(expected 'creation' or 'dependency_chain')"
+        )
 
     # --- Phase 1: partition -------------------------------------------------
     groups = []
@@ -943,7 +1102,7 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int):
             groups.append(current)
             current = GateGroup(len(groups))
 
-    for node in net.nodes:
+    for node in traversal_order:
         if node.is_pi:
             continue
 
@@ -1812,6 +1971,12 @@ if __name__ == "__main__":
     parser.add_argument("--max-pebbles", type=int, default=5)
     parser.add_argument("--max-steps", type=_parse_max_steps, default="auto")
     parser.add_argument("--skip-qiskit", action="store_true")
+    parser.add_argument("--topo-order", choices=["creation", "dependency_chain"],
+                         default="creation",
+                         help="Which topological order build_gate_groups uses "
+                              "for its Phase 1 greedy pebble-budget fill. See "
+                              "pebbling_solver.py module docstring, "
+                              "'TOPOLOGICAL ORDER CHOICE'.")
     args = parser.parse_args()
 
     pebble_limit = args.max_pebbles
@@ -1865,7 +2030,7 @@ if __name__ == "__main__":
     _try_build_and_dump_qiskit(net, gadgets, "example_circuit.qasm")
 
     gate_limit = max(pebble_limit, len(net.pos))
-    gates = build_gate_groups(net, max_pebbles=gate_limit)
+    gates = build_gate_groups(net, max_pebbles=gate_limit, topo_order=args.topo_order)
     print_gate_node_groups(gates)
     display_gate_groups(gates)
 

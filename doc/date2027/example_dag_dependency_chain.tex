@@ -1,0 +1,59 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usetikzlibrary{arrows.meta,positioning}
+\begin{document}
+\begin{tikzpicture}[
+  pinode/.style={circle,draw,minimum size=8mm,fill=gray!15},
+  andnode/.style={rectangle,draw,minimum size=8mm,fill=blue!10},
+  xornode/.style={diamond,draw,minimum size=9mm,fill=orange!15,
+                  aspect=1.6},
+  ponode/.style={double,double distance=1pt},
+  >={Stealth[length=2mm]},
+  every path/.style={-> ,thick},
+]
+
+  % Gate-group boundaries
+  \draw[red,dashed,thick,rounded corners=4pt] (1.65,-1.95) rectangle (4.95,-0.15);
+  \node[red,anchor=north west,font=\scriptsize\bfseries] at (1.65,-0.15) {Gate 0};
+  \draw[teal,dashed,thick,rounded corners=4pt] (1.65,0.15) rectangle (2.75,1.25);
+  \node[teal,anchor=north west,font=\scriptsize\bfseries] at (1.65,1.25) {Gate 1};
+  \draw[violet,dashed,thick,rounded corners=4pt] (3.85,-1.25) rectangle (7.15,0.55);
+  \node[violet,anchor=north west,font=\scriptsize\bfseries] at (3.85,0.55) {Gate 2};
+  \draw[orange,dashed,thick,rounded corners=4pt] (3.85,0.15) rectangle (7.15,1.95);
+  \node[orange,anchor=north west,font=\scriptsize\bfseries] at (3.85,1.95) {Gate 3};
+  \draw[cyan,dashed,thick,rounded corners=4pt] (8.25,-0.55) rectangle (11.55,0.55);
+  \node[cyan,anchor=north west,font=\scriptsize\bfseries] at (8.25,0.55) {Gate 4};
+
+  \node[pinode] (n_pi0) at (0.00,-2.10) {pi0};
+  \node[pinode] (n_pi1) at (0.00,-0.70) {pi1};
+  \node[pinode] (n_pi2) at (0.00,0.70) {pi2};
+  \node[pinode] (n_pi3) at (0.00,2.10) {pi3};
+  \node[andnode] (n_n1) at (2.20,-0.70) {n1};
+  \node[andnode] (n_n2) at (2.20,0.70) {n2};
+  \node[andnode] (n_n3) at (4.40,-1.40) {n3};
+  \node[xornode] (n_n4) at (4.40,0.00) {n4};
+  \node[andnode,ponode] (n_n5) at (6.60,-0.70) {n5};
+  \node[andnode] (n_n6) at (4.40,1.40) {n6};
+  \node[andnode] (n_n7) at (6.60,0.70) {n7};
+  \node[andnode] (n_n9) at (8.80,0.00) {n9};
+  \node[xornode,ponode] (n_n10) at (11.00,0.00) {n10};
+
+  \draw (n_pi0) -- (n_n1);
+  \draw (n_pi1) -- (n_n1);
+  \draw (n_pi2) -- (n_n2);
+  \draw (n_pi3) -- (n_n2);
+  \draw (n_n1) -- (n_n3);
+  \draw (n_pi2) -- (n_n3);
+  \draw (n_n1) -- (n_n4);
+  \draw (n_n2) -- (n_n4);
+  \draw (n_n3) -- (n_n5);
+  \draw (n_n4) -- (n_n5);
+  \draw (n_n1) -- (n_n6);
+  \draw (n_pi3) -- (n_n6);
+  \draw (n_n6) -- (n_n7);
+  \draw (n_n2) -- (n_n7);
+  \draw (n_n7) -- (n_n9);
+  \draw (n_pi0) -- (n_n9);
+  \draw (n_n9) -- (n_n10);
+  \draw (n_pi1) -- (n_n10);
+\end{tikzpicture}
+\end{document}
