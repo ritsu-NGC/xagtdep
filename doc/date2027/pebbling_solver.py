@@ -1017,7 +1017,7 @@ def _dependency_chain_topo_order(net: PebblingNetwork):
     return order
 
 
-def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="creation"):
+def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="dependency_chain"):
     """
     Gate-group construction algorithm. See module docstring for the
     full rationale. Steps:
@@ -1058,9 +1058,9 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="creati
          but is checked defensively here.
 
     `topo_order`:
-      - "creation" (default): use `net.nodes` as-is, i.e. the order
+      - "creation": use `net.nodes` as-is, i.e. the order
         nodes were created in (today's original behavior, unchanged).
-      - "dependency_chain": use `_dependency_chain_topo_order(net)`
+      - "dependency_chain" (default): use `_dependency_chain_topo_order(net)`
         instead, which reorders nodes (still a VALID topological
         order -- convexity is preserved regardless) to keep
         producer/consumer chains adjacent, so Phase 1's greedy
