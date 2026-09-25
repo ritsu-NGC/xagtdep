@@ -167,6 +167,42 @@ their owning gate's compute step finishes, rather than deferred to
 that gate's uncompute_gate event, for the same reason: a PO-owning
 gate never uncomputes.
 
+======================================================================
+COMPOUND XOR CLUSTER DETECTION (`read_blif`)
+======================================================================
+
+`_is_xor_cover` only recognizes a genuine XOR/XNOR when a SINGLE
+`.names` node's own cover has exactly the 2-row XOR pattern
+({"01 1", "10 1"}) or XNOR pattern ({"00 1", "11 1"}). Many real BLIF
+benchmarks (e.g. EPFL's `adder.blif`) instead decompose an XOR into
+THREE separate `.names` nodes: two single-minterm "product" nodes over
+the SAME two signals (e.g. `p1 = a & ~b`, `p2 = ~a & b`), combined by a
+third node via a NOR/OR/XNOR-style multi-row cover (e.g.
+`out = NOR(p1, p2)`, cover row "00 0"). Each of these 3 nodes, in
+isolation, fails `_is_xor_cover` (the two product nodes have only 1
+row, not 2; the combiner's cover isn't the exact 2-row XOR/XNOR
+pattern), so all 3 were previously charged as full AND-cost pebbles
+by `_pebble_cost`, and routed to AND-type synthesis rules by
+`select_gadget_rule` -- even though the whole 3-node cluster is
+functionally just one ancilla-free XOR gate.
+
+`_try_mark_compound_xor_cluster`, called from `read_blif` right after
+each node is created, detects this specific 3-node shape (two
+complementary single-minterm products over the same 2 signals, feeding
+a NOR/XNOR-style combiner) and retroactively marks all 3 nodes'
+`is_xor = True`. This flows through automatically to:
+  - `_pebble_cost` -- all 3 nodes now cost 0, not 3, in Phase 1's
+    pebble-budget accounting.
+  - `select_gadget_rule` -- all 3 nodes now route to rule 5 (ancilla-
+    free CNOT cascade) instead of AND-type rules 1-4.
+
+This detector is intentionally NARROW: it only fires on the exact
+"two complementary single-minterm products over the same 2 signals,
+combined by a 2-row-negated-style combiner" shape. It does NOT attempt
+to reclassify other multi-row AND/OR/NOR carry-logic clusters (e.g.
+EPFL adder.blif's carry-propagate gates), to avoid misclassifying
+genuine AND/OR logic as XOR.
+
 Everything else in this file (node-level Z3 pebbling, Reed-Muller/ESOP
 network generators, gate-level Z3 pebbling, gadget synthesis,
 Qiskit/QASM export) is unchanged in spirit from prior revisions.
@@ -450,9 +486,101 @@ def _is_xor_cover(cover_rows, num_fanins):
     return rows == xor_pattern or rows == xnor_pattern
 
 
+def _minterm_bits(fanin_order, rows, shared_order):
+    """
+    If `rows` is a SINGLE-row cover asserting exactly one minterm over
+    `fanin_order` (e.g. "10 1"), returns that minterm's bits remapped
+    into `shared_order`'s indexing (a tuple of '0'/'1' chars). Returns
+    None if `rows` isn't a single positive minterm row, contains a
+    don't-care ('-'), or its fanins don't match `shared_order`'s node
+    set exactly.
+    """
+    if len(rows) != 1:
+        return None
+    parts = rows[0].strip().split()
+    if len(parts) != 2:
+        return None
+    patt, outb = parts
+    if outb != "1" or len(patt) != len(fanin_order):
+        return None
+    bits = {}
+    for lit, n in zip(patt, fanin_order):
+        if lit == "-":
+            return None
+        bits[n] = lit
+    if set(bits.keys()) != set(shared_order):
+        return None
+    return tuple(bits[n] for n in shared_order)
+
+
+def _try_mark_compound_xor_cluster(node, fanins, rows, node_cover_info):
+    """
+    Detects the 3-node XOR/XNOR decomposition pattern used by some BLIF
+    benchmarks (e.g. EPFL's `adder.blif` sum-bit logic):
+
+        p1 = .names a b p1   (single minterm, e.g. "10 1" -> a & ~b)
+        p2 = .names a b p2   (the COMPLEMENTARY minterm over the SAME
+                               a, b, e.g. "01 1" -> ~a & b)
+        out = .names p1 p2 out   ("00 0" -> NOR(p1,p2) == XOR(a,b),
+                                   or "11 1"/"00 1"/"11 0" for the
+                                   XNOR-polarity variants)
+
+    If `node` (the combiner, `out` above) matches this shape, marks
+    `node` AND its two direct product fanins (`p1`, `p2`) as
+    `is_xor = True`, so `_pebble_cost` correctly treats the WHOLE
+    3-node cluster as a single ancilla-free XOR (matching its actual
+    synthesis cost -- see `select_gadget_rule`'s rule 5), instead of
+    charging 3 separate AND-cost pebbles for what is functionally just
+    one XOR gate.
+
+    `node_cover_info`: dict of Node -> (fanin_nodes, cover_rows),
+    populated during BLIF parsing for every node seen so far (nodes
+    always appear here before any node that consumes them, since BLIF
+    -- and this reader -- processes `.names` blocks in topological
+    order).
+
+    Returns True if a cluster was detected and marked, else False.
+    """
+    if len(fanins) != 2:
+        return False
+    p1, p2 = fanins
+    info1 = node_cover_info.get(p1)
+    info2 = node_cover_info.get(p2)
+    if info1 is None or info2 is None:
+        return False
+
+    p1_fanins, p1_rows = info1
+    p2_fanins, p2_rows = info2
+    if len(p1_fanins) != 2 or len(p2_fanins) != 2:
+        return False
+    if set(p1_fanins) != set(p2_fanins):
+        return False  # must both be products over the SAME 2 signals
+
+    shared_order = list(p1_fanins)
+    m1 = _minterm_bits(p1_fanins, p1_rows, shared_order)
+    m2 = _minterm_bits(p2_fanins, p2_rows, shared_order)
+    if m1 is None or m2 is None or m1 == m2:
+        return False
+
+    # A genuine XOR/XNOR minterm pair must be COMPLEMENTARY -- differ
+    # in BOTH bit positions (e.g. "10" & "01", or "00" & "11").
+    if not (m1[0] != m2[0] and m1[1] != m2[1]):
+        return False
+
+    combiner_rows = set(r.strip() for r in rows)
+    if combiner_rows not in ({"00 0"}, {"11 1"}, {"00 1"}, {"11 0"}):
+        return False
+
+    node.is_xor = True
+    p1.is_xor = True
+    p2.is_xor = True
+    return True
+
+
 def read_blif(path):
     net = PebblingNetwork()
     name_to_node = {}
+    node_cover_info = {}   # Node -> (fanin_nodes, cover_rows)
     outputs = []
     pending = None
     pending_rows = []
@@ -469,7 +597,13 @@ def read_blif(path):
         out_name, fanin_names = pending
         fanins = [name_to_node[f] for f in fanin_names]
         is_xor = _is_xor_cover(pending_rows, len(fanin_names))
-        name_to_node[out_name] = net.create_gate(fanins, name=out_name, is_xor=is_xor)
+        node = net.create_gate(fanins, name=out_name, is_xor=is_xor)
+        name_to_node[out_name] = node
+        node_cover_info[node] = (fanins, list(pending_rows))
+
+        if not is_xor:
+            _try_mark_compound_xor_cluster(node, fanins, pending_rows, node_cover_info)
+
         pending = None
         pending_rows = []
 
@@ -781,6 +915,7 @@ class GateGroup:
         self.inputs = []         # external fanin nodes (PI or other-group)
         self.depends_on = set()  # other gate ids this gate depends on
 
+    # Backward-compatible aliases used by GatePebbleSolver/printers.
     @property
     def clean_pebble(self):
         return self.outputs
@@ -791,10 +926,17 @@ class GateGroup:
 
     @property
     def xor_nodes(self):
+        # No longer a separate bucket -- XOR nodes are just ordinary
+        # members of `nodes`, classified into outputs/internal like any
+        # other node. Kept as an empty list for old call sites that
+        # still reference it (e.g. display/print helpers).
         return []
 
     @property
     def dependencies(self):
+        # Backward-compat: node-level view of which owned nodes have an
+        # external fanin (for display purposes only; the gate-id-level
+        # dependency set is `depends_on`, computed directly).
         owned = set(self.nodes)
         return [n for n in self.nodes if any(fi not in owned for fi in n.fanins)]
 
@@ -806,6 +948,13 @@ class GateGroup:
 
 
 def _compute_boundaries(net: PebblingNetwork, groups, pos_set, children=None):
+    """
+    Populates `inputs`/`outputs`/`internal` for every group in `groups`,
+    based purely on each owned node's ORIGINAL fanin/fanout edges
+    against the CURRENT ownership assignment. Can be called repeatedly
+    (e.g. after `_split_mixed_po_groups` changes ownership) to
+    recompute boundaries from scratch.
+    """
     if children is None:
         children = net.build_children()
 
@@ -839,6 +988,8 @@ def _compute_boundaries(net: PebblingNetwork, groups, pos_set, children=None):
 
 
 def _renumber_groups(node_lists):
+    """Rebuilds a fresh list of `GateGroup` objects (gid 0..n-1) from
+    a list of owned-node lists, preserving relative order."""
     groups = []
     for i, nodes in enumerate(node_lists):
         g = GateGroup(i)
@@ -848,6 +999,29 @@ def _renumber_groups(node_lists):
 
 
 def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
+    """
+    Repeatedly splits any group whose `outputs` mix a genuine primary
+    output with a non-PO output, so that no group ever ends up in a
+    state where a non-PO output can never be freed (because its
+    owning group also owns a PO and therefore never uncomputes). See
+    module docstring ("MIXED PO GROUPS") for the full rationale.
+
+    Splitting is done by cutting a group's owned-node list immediately
+    after the LAST non-PO output node in that group; everything up to
+    and including that point becomes an earlier group (guaranteed to
+    have no PO among its outputs, since the split point was chosen as
+    the last non-PO output -- any PO in the original group must appear
+    strictly after all non-PO outputs... this is not assumed, it's
+    re-verified by recomputing boundaries and re-checking each
+    iteration), and the remainder becomes a later group. Because every
+    group is always a CONTIGUOUS RANGE of the overall topological
+    order, splitting one range into two contiguous sub-ranges preserves
+    convexity everywhere (a sub-range of a convex range is convex).
+
+    Runs to a fixed point: since each split strictly increases the
+    number of groups while the total node count stays fixed, this loop
+    is guaranteed to terminate.
+    """
     children = net.build_children()
     _compute_boundaries(net, groups, pos_set, children=children)
 
@@ -881,13 +1055,59 @@ def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
 
 
 def _pebble_cost(node):
+    """
+    Returns this node's Phase-1 contribution to the gate-group pebble
+    budget.
+
+    XOR nodes are hard-excluded (cost 0) because their synthesis rule is
+    ancilla-free. Future cost-weighted grouping should change non-XOR
+    costs here without ever letting XOR nodes contribute via a fallback.
+    """
     return 0 if node.is_xor else 1
 
 
 def _dependency_chain_topo_order(net: PebblingNetwork):
+    """
+    Computes an alternative valid topological order for `net.nodes`
+    that greedily prefers scheduling a node's DIRECT CONSUMER
+    immediately after it, whenever that consumer's other fanins are
+    already placed too ("ready") -- rather than the network's original
+    creation order.
+
+    CORRECTNESS NOTE: this does not weaken any guarantee in
+    `build_gate_groups`. The convexity proof (see module docstring) only
+    uses the generic topological-order property -- for any edge
+    u -> w, topo(u) < topo(w) -- and never anything specific to
+    creation order. Any valid topological order preserves convexity of
+    contiguous ranges. This function only changes WHICH nodes end up
+    adjacent, and therefore which nodes Phase 1's greedy pebble-budget
+    fill groups together.
+
+    Heuristic ("list scheduling with successor preference", also used
+    in compiler instruction scheduling to minimize live-range overlap):
+    after placing node `u`, if `u` has a direct consumer `w` whose
+    OTHER fanins are already placed (i.e. `w` just became "ready"
+    because of `u`), place `w` next. This chains genuinely DEPENDENT
+    nodes together, so a producer is much more likely to land in the
+    same contiguous group as its consumer, instead of an unrelated
+    sibling that merely happens to sit nearby in creation order.
+
+    Falls back to the earliest-ready node by creation order (stable,
+    deterministic) whenever no direct consumer of the just-placed node
+    is yet ready.
+    """
     children = net.build_children()
     creation_index = {n: i for i, n in enumerate(net.nodes)}
 
+    # IMPORTANT: count only NON-PI fanins here. PIs are already
+    # considered "placed" from the very start (see `placed` below) and
+    # never go through the decrement step in the main loop (only nodes
+    # actually popped from `ready` decrement their children's
+    # counters). If we counted PI fanins too, a node whose fanins are
+    # ALL PIs (e.g. a 2-input AND fed directly by two primary inputs)
+    # would never have its counter reach 0, `ready` would start empty,
+    # and the whole traversal would silently produce zero non-PI
+    # nodes.
     remaining_fanins = {
         n: sum(1 for f in n.fanins if not f.is_pi)
         for n in net.nodes if not n.is_pi
@@ -934,6 +1154,59 @@ def _dependency_chain_topo_order(net: PebblingNetwork):
 
 
 def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="dependency_chain"):
+    """
+    Gate-group construction algorithm. See module docstring for the
+    full rationale. Steps:
+
+      1. Partition: walk the network's nodes (in the topological order
+         selected by `topo_order` -- see module docstring, "TOPOLOGICAL
+         ORDER CHOICE") in order, skipping PIs, and assign each non-PI
+         node to the CURRENT group. Close the current group (start a
+         fresh one) when:
+           (a) the node is a primary output, or
+           (b) the accumulated Phase-1 pebble cost of nodes placed into
+               the current group reaches `max_pebbles - 1`.
+         That per-node cost currently comes from `_pebble_cost(node)`,
+         which returns 0 for XOR nodes and 1 for every other non-PI
+         node. Future cost-aware grouping should continue to route all
+         such accounting through `_pebble_cost` so XOR nodes remain
+         hard-excluded from the budget.
+
+      2. Boundary computation: for every group, inspect each owned
+         node's ORIGINAL fanins/fanouts to classify it as `outputs`
+         (external consumer or PO) or `internal` (fully consumed
+         within the group), and collect `inputs` (external fanins
+         actually used).
+
+      2.5. Split any group whose `outputs` mix a genuine PO with a
+           non-PO output (`_split_mixed_po_groups`) -- see module
+           docstring ("MIXED PO GROUPS").
+
+      3. Dependency derivation: for each (possibly re-split) group,
+         look up the owner group of each of its `inputs`; that owner's
+         gid is added to `depends_on`.
+
+      4. Validation: confirm every non-PI node is owned by EXACTLY one
+         group (`_validate_gate_partition`), and that the resulting
+         gate-dependency graph is acyclic (`find_gate_dependency_cycle`)
+         -- which is guaranteed by construction (contiguous ranges of a
+         topological order are always convex, see accompanying .tex),
+         but is checked defensively here.
+
+    `topo_order`:
+      - "creation": use `net.nodes` as-is, i.e. the order
+        nodes were created in (today's original behavior, unchanged).
+      - "dependency_chain" (default): use `_dependency_chain_topo_order(net)`
+        instead, which reorders nodes (still a VALID topological
+        order -- convexity is preserved regardless) to keep
+        producer/consumer chains adjacent, so Phase 1's greedy
+        pebble-budget fill is more likely to group a node with its
+        actual dependents rather than an unrelated sibling. See module
+        docstring for details and a worked example.
+
+    Raises `ValueError` if `max_pebbles < len(net.pos)`, or if
+    `topo_order` is not one of the recognized values.
+    """
     if max_pebbles < len(net.pos):
         raise ValueError(
             f"max_pebbles={max_pebbles} is less than the number of primary "
@@ -954,6 +1227,7 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
             f"(expected 'creation' or 'dependency_chain')"
         )
 
+    # --- Phase 1: partition -------------------------------------------------
     groups = []
     current = GateGroup(0)
     cur_pebble = 0
@@ -981,6 +1255,8 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
             continue
 
         if max_pebbles <= 1:
+            # max_pebbles == 1 (only ever valid if len(net.pos) <= 1):
+            # every non-PI, non-XOR node must be its own group.
             finalize()
             cur_pebble = 0
         elif cur_pebble >= max_pebbles - 1:
@@ -989,8 +1265,10 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
 
     finalize()
 
+    # --- Phase 2 + 2.5: boundary computation, then split mixed-PO groups ---
     groups = _split_mixed_po_groups(net, groups, pos_set)
 
+    # --- Phase 3: dependency derivation ------------------------------------
     node_owner = {}
     for g in groups:
         for n in g.nodes:
@@ -1004,6 +1282,7 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
                 deps.add(owner_gid)
         g.depends_on = deps
 
+    # --- Phase 4: validation ------------------------------------------------
     _validate_gate_partition(net, groups)
     _validate_no_mixed_po_groups(groups, pos_set)
     cycle = find_gate_dependency_cycle(groups)
@@ -1018,6 +1297,11 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
 
 
 def _validate_gate_partition(net: PebblingNetwork, groups):
+    """
+    Confirms every non-PI node in `net` is owned by EXACTLY ONE group.
+    Raises `ValueError` on violation (duplicate ownership or missing
+    node).
+    """
     non_pi_nodes = [n for n in net.nodes if not n.is_pi]
     seen = {}
     for g in groups:
@@ -1035,6 +1319,12 @@ def _validate_gate_partition(net: PebblingNetwork, groups):
 
 
 def _validate_no_mixed_po_groups(groups, pos_set):
+    """
+    Defensive check: confirms `_split_mixed_po_groups` actually
+    achieved its invariant -- no group's `outputs` mix a genuine PO
+    with a non-PO output. Raises `AssertionError` if violated (would
+    indicate a bug in the splitting logic).
+    """
     for g in groups:
         po_outputs = [n for n in g.outputs if n in pos_set]
         non_po_outputs = [n for n in g.outputs if n not in pos_set]
@@ -1049,6 +1339,10 @@ def _validate_no_mixed_po_groups(groups, pos_set):
 
 
 def find_gate_dependency_cycle(groups):
+    """
+    Static (non-Z3) DFS cycle check over `group.depends_on`. Returns a
+    list of gate ids forming a cycle, or None if acyclic.
+    """
     deps = {g.gid: set(g.depends_on) for g in groups}
 
     WHITE, GRAY, BLACK = 0, 1, 2
@@ -1082,6 +1376,12 @@ def find_gate_dependency_cycle(groups):
 
 
 def expand_gate_schedule(gates, gate_steps):
+    """
+    Reconstruction utility: expands a solved gate-level schedule (list
+    of (k, gid, op, tag) from `GatePebbleSolver.extract`) back into a
+    node-level compute/uncompute sequence, using each gate's owned
+    `nodes` list (in topological order).
+    """
     gate_by_id = {g.gid: g for g in gates}
     node_steps = []
 
@@ -1098,6 +1398,13 @@ def expand_gate_schedule(gates, gate_steps):
 
 
 def reconstruct_original_graph(gates, pis, pos):
+    """
+    Reconstruction utility: since every non-PI node is owned by exactly
+    one gate group, and every `Node` retains its ORIGINAL `fanins`, the
+    full original graph (nodes + edges) can be recovered simply as the
+    union of all group-owned nodes plus the original PI list, in
+    topological order.
+    """
     net = PebblingNetwork()
     nodes = list(pis)
     for g in gates:
@@ -1126,10 +1433,27 @@ def print_gate_node_groups(gates):
 
 
 # ---------------------------------------------------------------------------
-# Gate-level pebbling
+# Gate-level pebbling (max simultaneously pebbled AND-gates <= max_pebbles;
+# pure-XOR gates are exempt from the cap)
 # ---------------------------------------------------------------------------
 
 class GatePebbleSolver:
+    """
+    Pebbles whole GateGroup objects. A gate can toggle only if every
+    OTHER gate it depends on (`gate.depends_on`, derived from boundary
+    inputs -- see `build_gate_groups`) is pebbled both before and after
+    the transition.
+
+    XOR-only gates (every owned node is an XOR node) are exempt from
+    the simultaneous-pebble cap, since their gadget needs no ancilla.
+
+    Gates that own at least one TRUE primary output (checked against
+    `net.pos`) MUST remain pebbled at the final step. Thanks to the
+    Phase 2.5 split in `build_gate_groups`, such a gate's `outputs`
+    NEVER also contain a non-PO output, so this "never uncomputes"
+    requirement can no longer strand any non-PO value.
+    """
+
     def __init__(self, gates, max_pebbles, net=None):
         self.gates = gates
         self.max_pebbles = max_pebbles
@@ -1142,6 +1466,11 @@ class GatePebbleSolver:
         def _is_xor_only(g):
             return len(g.nodes) > 0 and all(n.is_xor for n in g.nodes)
 
+        # This is a GROUP-level flag used by the PbLe constraint over
+        # whole-group state bits (`s_next[g.gid]`), not a per-node weight.
+        # Mixed groups still count toward the limit because their AND
+        # nodes do need ancilla; only groups composed entirely of XOR
+        # nodes are exempt.
         self.counts_toward_limit = {g.gid: not _is_xor_only(g) for g in gates}
         self.gate_deps = {g.gid: set(g.depends_on) for g in gates}
 
@@ -1217,10 +1546,21 @@ class GatePebbleSolver:
                         print(f"step {k}: {op} gate {gid} ({tag})")
         return seq
 
-
 def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
                   auto_increase_pebbles=True, max_pebbles_cap=None, net=None,
                   dump_json=None):
+    """
+    Solves for a valid gate-level pebbling schedule with an escalating
+    max_pebbles search. See module docstring and `GatePebbleSolver` for
+    the full solving semantics.
+
+    dump_json: optional path. If set, as soon as a solution is found,
+    writes the solved gate-level schedule and gate groups (and, if
+    `net` is provided, the expanded node-level pebbling sequence) to
+    this path as JSON via `dump_pebbling_debug_json`, right before
+    returning. Purely a debug/dev toggle -- does not affect solving
+    behavior or the returned value.
+    """
     if max_pebbles_cap is None:
         max_pebbles_cap = max(1, len(gates))
     max_pebbles_cap = max(max_pebbles_cap, max_pebbles)
@@ -1271,6 +1611,79 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
         f"{max_pebbles} up to max_pebbles_cap={max_pebbles_cap}."
     )
 
+def _solve_gate_steps_at_fixed_steps(gates, max_pebbles, net, num_steps):
+    """
+    Builds a fresh GatePebbleSolver, adds EXACTLY `num_steps` steps
+    (regardless of intermediate SAT/UNSAT along the way -- only the
+    FINAL check at exactly this step count is examined), and returns
+    (result, solver) where result is z3's sat/unsat.
+    """
+    s = GatePebbleSolver(gates, max_pebbles, net=net)
+    s.init()
+    for _ in range(num_steps):
+        s.add_step()
+    r = s.solve()
+    return r, s
+
+def find_min_gate_steps(gates, max_pebbles, net, start_steps=None, verbose=True):
+    """
+    Finds the MINIMUM number of steps for which `GatePebbleSolver` is
+    SAT at a FIXED `max_pebbles` budget, by decreasing the step count
+    one at a time from `start_steps` until UNSAT is hit.
+
+    See prior discussion for full rationale: `pebble_gates`'s own
+    step-escalation loop only ever searches UPWARD for the first step
+    count at which Z3 becomes SAT -- it never checks whether FEWER
+    steps would also work, and the encoding has no cost/objective
+    function, so any returned schedule may contain unconstrained,
+    functionally unnecessary toggles.
+
+    `start_steps`: an upper bound already known to be SAT (e.g. derived
+    from a prior successful `pebble_gates(...)` call's returned
+    `gate_steps`, via `max(k for k, *_ in gate_steps)`). If omitted,
+    defaults to the same "auto" heuristic `pebble_gates` itself uses
+    (`max(4, len(gates) * 4)`).
+
+    Returns (min_steps, gate_steps_at_min_steps).
+
+    Raises `RuntimeError` if `start_steps` itself is not SAT.
+
+    NOTE: performs a LINEAR (not binary) downward search; each step
+    count rebuilds a fresh solver from scratch. Intended as a
+    diagnostic/debug tool, not part of the main solving hot path.
+    """
+    if start_steps is None:
+        start_steps = max(4, len(gates) * 4)
+
+    r, s = _solve_gate_steps_at_fixed_steps(gates, max_pebbles, net, start_steps)
+    if r != sat:
+        raise RuntimeError(
+            f"start_steps={start_steps} is not SAT at max_pebbles="
+            f"{max_pebbles} -- pick a larger start_steps (e.g. re-derive "
+            f"it from a successful pebble_gates(...) call first)."
+        )
+
+    best_steps = start_steps
+    best_solver = s
+
+    current_steps = start_steps - 1
+    while current_steps >= 0:
+        r, s = _solve_gate_steps_at_fixed_steps(gates, max_pebbles, net, current_steps)
+        if r == sat:
+            if verbose:
+                print(f"  steps={current_steps}: SAT")
+            best_steps = current_steps
+            best_solver = s
+            current_steps -= 1
+        else:
+            if verbose:
+                print(f"  steps={current_steps}: UNSAT -- "
+                      f"minimum is {best_steps}")
+            break
+
+    best_solver.save_model()
+    gate_steps = best_solver.extract(verbose=False)
+    return best_steps, gate_steps
 
 def print_gate_pebbling_constraints(gates, max_pebbles, net=None):
     s = GatePebbleSolver(gates, max_pebbles, net=net)
@@ -1330,6 +1743,32 @@ def _resolve_control_qubits(node, snapshot):
 
 
 def _replay_gate_pebbling(net, gates, gate_steps):
+    """
+    Deterministically replays qubit assignment for a gate-level
+    pebbling schedule.
+
+    Qubit lifecycle rules:
+      - Internal (dirty) nodes are allocated via `_alloc_dirty` when
+        their owning gate computes, and freed back to `dirty_free`
+        IMMEDIATELY after that same compute step -- they are pure
+        ancilla local to the gate's own computation and are NEVER read
+        by anything outside the gate (that's the definition of
+        "internal").
+      - Output (clean) nodes are allocated via `_alloc_clean` when
+        their owning gate computes. On that gate's uncompute event:
+          * if the node is a TRUE primary output (member of
+            `net.pos`), it is NEVER freed -- it must remain live for
+            the rest of the circuit.
+          * otherwise, it IS freed back to `clean_free`. Thanks to
+            `_split_mixed_po_groups` (run in `build_gate_groups`), a
+            group can never contain both a genuine PO and a non-PO
+            output, so any gate with a non-PO output is guaranteed to
+            actually reach an `uncompute_gate` event where this
+            freeing can happen.
+      - XOR nodes never allocate a fresh qubit -- they alias one of
+        their own fanins' qubits instead, so "freeing" an XOR node is
+        purely a bookkeeping event (no qubit returned to any pool).
+    """
     alloc = QubitAllocation()
 
     for pi in net.pis:
@@ -1347,10 +1786,15 @@ def _replay_gate_pebbling(net, gates, gate_steps):
             output_set = set(g.outputs)
             for node in g.nodes:
                 if node in pos_set:
+                    # True primary output: remains live forever, never
+                    # returned to any free pool.
                     continue
 
                 q = alloc.assignment.pop(node, None)
                 if q is None:
+                    # Internal nodes were already freed eagerly at
+                    # their own compute step; this is expected for
+                    # them.
                     continue
 
                 is_output = node in output_set
@@ -1364,10 +1808,14 @@ def _replay_gate_pebbling(net, gates, gate_steps):
                         alloc.clean_free.append(q)
                         yield ("free_clean", k, node, q)
                     else:
+                        # Defensive fallback: should not normally be
+                        # reached, since internal nodes are freed
+                        # eagerly right after their compute step below.
                         alloc.dirty_free.append(q)
                         yield ("free_dirty", k, node, q)
             continue
 
+        # compute_gate: process internal (dirty) nodes then outputs
         dirty_assigned = []
         for node in g.internal:
             if node.is_xor and node.fanins:
@@ -1398,6 +1846,11 @@ def _replay_gate_pebbling(net, gates, gate_steps):
 
         yield ("compute_ready", k, g, dict(alloc.assignment))
 
+        # Eagerly reclaim internal (dirty) qubits right after this
+        # gate's own compute step -- nothing outside this gate ever
+        # reads an internal node's value, so there is no reason to
+        # wait for this gate's (possibly nonexistent, e.g. PO-owning)
+        # uncompute_gate event to free them.
         for node in dirty_assigned:
             q = alloc.assignment.pop(node, None)
             if q is None:
@@ -1407,6 +1860,13 @@ def _replay_gate_pebbling(net, gates, gate_steps):
 
 
 def assign_qubits_to_pebbling(net, gates, gate_steps):
+    """
+    Maps a solved gate-level pebbling schedule onto concrete qubit
+    indices. See `_replay_gate_pebbling` for the full reuse/liveness
+    policy. A sanity-check assertion verifies no two simultaneously-live
+    non-aliased nodes ever share a qubit index, and that at the end of
+    the schedule ONLY true primary outputs remain live.
+    """
     alloc = QubitAllocation()
     live_qubits = {}
 
@@ -1471,7 +1931,7 @@ def print_qubit_allocation(alloc):
 
 
 # ---------------------------------------------------------------------------
-# Gate/gadget synthesis (Table: dirty ancilla gadgets)
+# Gate/gadget synthesis (Toffoli/T-gate decomposition per synthesis table)
 # ---------------------------------------------------------------------------
 
 class QOp:
@@ -1770,11 +2230,13 @@ def dump_qasm(qc, path=None):
 # Debug/dump helpers
 # ---------------------------------------------------------------------------
 
+
 def _pebbling_steps_to_json(steps):
+    """Serializes a node-level (node, action) step list to plain dicts."""
     return [{"node": n.name, "action": action} for n, action in steps]
 
-
 def _gate_groups_to_json(gates):
+    """Serializes GateGroup objects to plain dicts for JSON dumping."""
     out = []
     for g in gates:
         out.append({
@@ -1787,9 +2249,15 @@ def _gate_groups_to_json(gates):
         })
     return out
 
-
 def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
                               gate_steps=None, extra=None):
+    """
+    Writes a single JSON file containing the node-level pebbling
+    sequence and/or gate groups and/or gate-level schedule, for
+    external inspection. Purely a debug/dev toggle -- does not affect
+    solving behavior.
+    """
+    import json
     payload = {}
     if node_steps is not None:
         payload["node_pebbling_sequence"] = _pebbling_steps_to_json(node_steps)
@@ -1860,6 +2328,7 @@ if __name__ == "__main__":
         qasm_text = dump_qasm(qc, path=qasm_path)
         print(f"\nWrote QASM to {qasm_path} ({len(qasm_text)} chars)")
 
+    # --- Example: fixed two-output Boolean network via Reed-Muller --------
     print("=" * 60)
     print("Example: two fixed 4-variable Boolean functions, Reed-Muller "
           "decomposed with cut sharing, topological gate grouping")
