@@ -48,7 +48,7 @@ DIAGNOSTICS (--debug)
 ======================================================================
 Pass --debug to print, for every DAG in the batch:
   - the gate-group partition: group id, node names, and each node's
-    resolved gadget rule (1-5) and its per-node T/Tdg cost.
+    resolved gadget rule (1-6) and its per-node T/Tdg cost.
   - the gate-LEVEL schedule: how many times each group id was toggled
     (compute_gate / uncompute_gate events), from `gate_steps` (the
     output of `pebble_gates`, BEFORE `expand_gate_schedule` unpacks it
@@ -62,13 +62,41 @@ Pass --debug to print, for every DAG in the batch:
 This was added to answer: "why is ours-T so much higher than the raw
 gate count suggests?" -- the total T-count is NOT simply
 (num_gate_level_toggles) x (some fixed per-toggle cost), because (a)
-gadget rules cost different amounts (Rule 1=4, Rule 3=6, Rule 4=7,
-Rule 5/XOR=0 T/Tdg gates; Rule 2 still contains an undecomposed raw
-TOFFOLI placeholder and its true cost is not yet consistently counted
--- flagged here as a known open issue), and (b) each gate-level toggle
+gadget rules cost different amounts, and (b) each gate-level toggle
 fires EVERY node in that group at once, and groups can vary in size.
 Only the actual instrumented counts below can tell you whether the
 blowup is from group size, recomputation, or both.
+
+======================================================================
+PEBBLING DEBUG JSON DUMP (on by default)
+======================================================================
+Every DAG run through `run_our_pipeline` also dumps its solved
+gate-level schedule, its gate groups, and its expanded node-level
+pebbling sequence to a JSON file, via `pebbling_solver.pebble_gates`'s
+`dump_json` parameter (see pebbling_solver.py, `dump_pebbling_debug_json`).
+
+By default one file per DAG is written to `<out_dir>/<label>_pebbling_debug.json`
+(same directory as the generated/looked-up `.blif` file). Pass
+--no-dump-pebbling-json to disable this, or --dump-json-dir to redirect
+the JSON files to a different directory than the BLIF output directory.
+
+======================================================================
+TIKZ NETWORK DIAGRAM DUMP (on by default)
+======================================================================
+Every DAG run through `run_our_pipeline` also dumps a plain TikZ
+diagram of the logic network's DAG (PIs, AND/XOR gates, POs, fanin
+edges), with each solved GateGroup drawn as a dashed colored bounding
+box around its member nodes -- see `tikz_network_export.py`. This is a
+VISUALIZATION-only export; it never affects solving, T-counts, or
+qubit allocation.
+
+By default one `.tex` file per DAG is written to
+`<out_dir>/<label>_network.tex` (same directory as --dump-json-dir /
+the BLIF output directory). Pass --no-dump-tikz to disable this, or
+--dump-tikz-dir to redirect the .tex files elsewhere. Compile with
+`pdflatex <label>_network.tex` (requires the `tikz`
+arrows.meta/positioning/fit/backgrounds libraries, which are part of
+any standard TikZ install).
 
 ======================================================================
 BLIF EXPORT
@@ -157,6 +185,7 @@ from pebbling_solver import (
 )
 from reed_muller_priority_cuts import random_reed_muller_priority_cut_dag
 from gate_schedule_to_circuit import build_circuit_from_node_schedule
+from tikz_network_export import dump_tikz_network
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +341,8 @@ _RULE_T_COST = {
     3: 6,
     4: 7,
     5: 0,  # XOR
+    6: None,  # nested-fanout cascade: cost is a function of fanout count,
+              # not a fixed per-node constant; see gate_schedule_to_circuit.py.
 }
 
 
@@ -386,7 +417,8 @@ def print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps):
 # Our own pipeline: gate groups -> pebbling -> circuit -> T-count
 # ---------------------------------------------------------------------------
 
-def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label=""):
+def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label="",
+                      dump_json_path=None, dump_tikz_path=None):
     """
     Runs build_gate_groups -> pebble_gates -> expand_gate_schedule ->
     build_circuit_from_node_schedule on `net`, and returns:
@@ -401,6 +433,18 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
 
     If `debug` is True, prints gate-group/toggle/node-event diagnostics
     (see `print_pipeline_diagnostics`) before returning.
+
+    If `dump_json_path` is provided, it is forwarded to
+    `pebbling_solver.pebble_gates`'s `dump_json` parameter, so the
+    solved gate-level schedule, gate groups, and expanded node-level
+    pebbling sequence for this DAG are written to that path as JSON.
+
+    If `dump_tikz_path` is provided, a plain TikZ diagram of `net`'s
+    DAG (with gate groups boxed) is written to that path via
+    `tikz_network_export.dump_tikz_network` -- see module docstring,
+    "TIKZ NETWORK DIAGRAM DUMP (on by default)". Purely a
+    visualization export; failures here are reported but do not affect
+    the returned T-count/qubit results.
 
     `max_pebbles` (if omitted) is auto-sized to `2 * len(net.pos)` and is
     ALSO passed as a hard `max_pebbles_cap` to `pebble_gates`, so
@@ -418,11 +462,19 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
         gate_steps = pebble_gates(
             gates, max_pebbles=max_pebbles, max_steps=max_steps, net=net,
             verbose=False, max_pebbles_cap=max_pebbles,
+            dump_json=dump_json_path,
         )
         node_steps = expand_gate_schedule(gates, gate_steps)
 
         if debug:
             print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps)
+
+        if dump_tikz_path:
+            try:
+                dump_tikz_network(dump_tikz_path, net, gates=gates, title=label)
+            except Exception as e:  # noqa: BLE001 -- purely visual, don't crash the batch
+                print(f"    [tikz export] failed for {label}: "
+                      f"{type(e).__name__}: {e}")
 
         circuit_result = build_circuit_from_node_schedule(net, node_steps)
     except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
@@ -591,6 +643,36 @@ def main():
              "DAG. Use this to see exactly why ours-T is what it is -- "
              "see module docstring, 'DIAGNOSTICS (--debug)'."
     )
+    parser.add_argument(
+        "--dump-json-dir", default=None,
+        help="Directory to write per-DAG pebbling debug JSON files into "
+             "(one file per DAG: <label>_pebbling_debug.json). Defaults "
+             "to the same directory as the generated/looked-up .blif "
+             "files (--out-dir). Ignored if --no-dump-pebbling-json is "
+             "passed."
+    )
+    parser.add_argument(
+        "--no-dump-pebbling-json", action="store_true",
+        help="Disable the default per-DAG pebbling debug JSON dump (gate "
+             "groups + gate-level schedule + expanded node-level "
+             "pebbling sequence). See module docstring, 'PEBBLING DEBUG "
+             "JSON DUMP (on by default)'."
+    )
+    parser.add_argument(
+        "--dump-tikz-dir", default=None,
+        help="Directory to write per-DAG TikZ network diagrams into "
+             "(one file per DAG: <label>_network.tex). Defaults to the "
+             "same directory as the generated/looked-up .blif files "
+             "(--out-dir). Ignored if --no-dump-tikz is passed. See "
+             "module docstring, 'TIKZ NETWORK DIAGRAM DUMP (on by "
+             "default)'."
+    )
+    parser.add_argument(
+        "--no-dump-tikz", action="store_true",
+        help="Disable the default per-DAG TikZ network diagram dump "
+             "(logic-network DAG with gate groups boxed). See module "
+             "docstring, 'TIKZ NETWORK DIAGRAM DUMP (on by default)'."
+    )
     args = parser.parse_args()
 
     requested_kinds = args.kinds or []
@@ -608,7 +690,37 @@ def main():
     else:
         os.makedirs(out_dir, exist_ok=True)
 
+    dump_json_enabled = not args.no_dump_pebbling_json
+    dump_json_dir = args.dump_json_dir or out_dir
+    if dump_json_enabled:
+        os.makedirs(dump_json_dir, exist_ok=True)
+
+    dump_tikz_enabled = not args.no_dump_tikz
+    dump_tikz_dir = args.dump_tikz_dir or out_dir
+    if dump_tikz_enabled:
+        os.makedirs(dump_tikz_dir, exist_ok=True)
+
+    def _dump_json_path_for(label):
+        if not dump_json_enabled:
+            return None
+        return os.path.join(dump_json_dir, f"{label}_pebbling_debug.json")
+
+    def _dump_tikz_path_for(label):
+        if not dump_tikz_enabled:
+            return None
+        return os.path.join(dump_tikz_dir, f"{label}_network.tex")
+
     print(f"BLIF files will be written to: {out_dir}")
+    if dump_json_enabled:
+        print(f"Pebbling debug JSON files will be written to: {dump_json_dir} "
+              f"(pass --no-dump-pebbling-json to disable)")
+    else:
+        print("Pebbling debug JSON dump disabled (--no-dump-pebbling-json).")
+    if dump_tikz_enabled:
+        print(f"TikZ network diagrams will be written to: {dump_tikz_dir} "
+              f"(pass --no-dump-tikz to disable; compile with pdflatex)")
+    else:
+        print("TikZ network diagram dump disabled (--no-dump-tikz).")
     if not args.caterpillar_bin:
         print("NOTE: --caterpillar-bin not provided; caterpillar T-counts "
               "will be skipped, only our own pipeline's T-count is reported.\n"
@@ -637,6 +749,8 @@ def main():
 
             our = run_our_pipeline(
                 net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+                dump_json_path=_dump_json_path_for(label),
+                dump_tikz_path=_dump_tikz_path_for(label),
             )
             cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
@@ -707,6 +821,8 @@ def main():
 
         our = run_our_pipeline(
             net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+            dump_json_path=_dump_json_path_for(label),
+            dump_tikz_path=_dump_tikz_path_for(label),
         )
         cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 

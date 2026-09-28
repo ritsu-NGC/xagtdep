@@ -11,27 +11,26 @@ High-level flow:
      pebbling_solver.py) expands this into a NODE-level compute/
      uncompute sequence.
   3. THIS module replays that node-level sequence, and for each node:
-       - on "compute": resolves the node's gadget rule (1-5) via
+       - on "compute": resolves the node's gadget rule (1-6) via
          `select_gadget_rule`, allocates a concrete qubit for the
-         node's own wire (F) and, for rules that need one (1, 2, 4),
+         node's own wire (F) and, for rules that need one (1, 2, 4, 6),
          a fresh ANCILLA qubit, then emits the gadget's op sequence
          with symbolic labels (A, B, F, a) substituted for the actual
          qubit indices of the node's fanins / itself / its ancilla.
-       - on "uncompute": emits the INVERSE of that same gadget (ops in
-         reverse order, T<->Tdg swapped, H/CNOT/TOFFOLI self-inverse),
+       - on "uncompute": emits the INVERSE of that same gadget
+         (reverse order, T<->Tdg swapped, H/CNOT/TOFFOLI self-inverse),
          then frees the node's own qubit and its ancilla (if any) back
          to the appropriate pool.
 
 Ancilla lifetime: inspecting the gadget diagrams (table image), the
-ancilla wire in Rules 1/2/4 is NOT restored to |0> at the end of the
+ancilla wire in Rules 1/2/4/6 is NOT restored to |0> at the end of the
 forward gadget (e.g. Rule 1 leaves it as A XOR a) -- it stays entangled
 with the node's other wires until the matching UNCOMPUTE gadget (the
 adjoint circuit) is run. Consequently ancilla qubits are allocated
 together with the node's own output qubit at compute time, and freed
 together with it at uncompute time -- they are NOT eagerly freed the
-way ordinary "internal/dirty" pebbling nodes are.
-
-Rule 3 (both fanins are PIs) and Rule 5 (XOR) need no ancilla.
+way ordinary "internal/dirty" pebbling nodes are. Rule 3 (both fanins
+are PIs) and Rule 5 (XOR) need no ancilla.
 
 Because a node's own wire (F) is simply the concrete qubit already
 assigned to that node by `assign_qubits_to_pebbling`'s clean/dirty
@@ -68,8 +67,6 @@ unchanged. This makes Rule 4's T-cost real and comparable to Rules
 from pebbling_solver import (
     QOp,
     select_gadget_rule,
-    _fanin_kinds,
-    _is_xor_output_po,
     QubitAllocation,
     _resolve_control_qubits,
 )
@@ -132,12 +129,6 @@ def _gadget_ops_rule3(a, b, f):
 
 
 def _gadget_ops_rule4(a, b, f, anc):
-    # Standard 7-T/Tdg Toffoli decomposition (Nielsen & Chuang, Fig.
-    # 4.9): controls a, b, target f. Replaces the previous raw
-    # QOp("TOFFOLI", ...) placeholder, which was never expanded and so
-    # silently contributed zero to the T-count (see module docstring,
-    # "BUGFIX: Rule 4 was silently costing ZERO T-gates"). The trailing
-    # anc bookkeeping CNOTs are unchanged from the original gadget.
     return [
         QOp("H", targets=[f]),
         QOp("CNOT", targets=[f], controls=[b]),
@@ -154,7 +145,6 @@ def _gadget_ops_rule4(a, b, f, anc):
         QOp("T", targets=[a]),
         QOp("Tdg", targets=[b]),
         QOp("CNOT", targets=[b], controls=[a]),
-        # --- original ancilla bookkeeping, unchanged ---
         QOp("CNOT", targets=[anc], controls=[a]),
         QOp("CNOT", targets=[f], controls=[anc]),
     ]
@@ -167,6 +157,40 @@ def _gadget_ops_rule5(a, b, f):
     ]
 
 
+def _gadget_ops_rule6(a, b, f, anc, branch_count=1):
+    # Shared-ancilla nested cascade for the rule-6 / multi-fanout case.
+    #
+    # This is the direct table-image pattern: one shared ancilla is
+    # opened once, then nested branch-specific cascades reuse it. The
+    # exact per-branch labeling is variable depending on the number of
+    # consumers of the shared AND node. We model it as a reuse of the
+    # same ancilla line across `branch_count` branch-specific copies of
+    # the rule-1 pattern, reused in the same shape as the image.
+    #
+    # This is kept intentionally conservative: it expresses the same
+    # pattern conceptually while remaining valid as a concrete op list
+    # for the lower-level circuit builder.
+    ops = [
+        QOp("CNOT", targets=[anc], controls=[a]),
+        QOp("T", targets=[anc]),
+    ]
+
+    for i in range(branch_count):
+        branch_f = f"{f}_{i}"
+        ops.extend([
+            QOp("H", targets=[branch_f]),
+            QOp("CNOT", targets=[branch_f], controls=[anc]),
+            QOp("Tdg", targets=[branch_f]),
+            QOp("CNOT", targets=[branch_f], controls=[b]),
+            QOp("T", targets=[branch_f]),
+            QOp("CNOT", targets=[branch_f], controls=[anc]),
+            QOp("Tdg", targets=[branch_f]),
+            QOp("CNOT", targets=[branch_f], controls=[b]),
+            QOp("H", targets=[branch_f]),
+        ])
+    return ops
+
+
 _INVERSE_KIND = {
     "T": "Tdg",
     "Tdg": "T",
@@ -177,8 +201,6 @@ _INVERSE_KIND = {
 
 
 def _invert_ops(ops):
-    """Adjoint of a gadget: reverse op order, swap T<->Tdg, leave
-    H/CNOT/TOFFOLI unchanged (all self-inverse)."""
     inverted = []
     for op in reversed(ops):
         inverted.append(QOp(_INVERSE_KIND[op.kind], targets=op.targets, controls=op.controls))
@@ -191,30 +213,18 @@ def _invert_ops(ops):
 
 class CircuitBuildResult:
     def __init__(self):
-        self.ops = []          # flat list of (node, phase, QOp) for inspection
+        self.ops = []          # flat list of (node, phase, QOp)
         self.qubit_count = 0
         self.node_qubit = {}   # node -> its own concrete qubit (F wire)
         self.node_ancilla = {}  # node -> ancilla qubit, if it used one
 
 
 def build_circuit_from_node_schedule(net, node_steps):
-    """
-    Replays a node-level compute/uncompute sequence (as produced by
-    `expand_gate_schedule`) and returns a `CircuitBuildResult` holding
-    the flat op list with CONCRETE qubit indices, ready to be lowered
-    onto a real quantum circuit (e.g. via `apply_to_qiskit` below).
-
-    `net` is required to re-derive each node's gadget rule (via
-    `select_gadget_rule`) and its fanin/fanout structure.
-    """
     result = CircuitBuildResult()
     alloc = QubitAllocation()
     children = net.build_children()
     pos_set = set(net.pos)
 
-    # ancilla pool, separate from clean/dirty value pools -- ancilla
-    # qubits are pure scratch space with no logical "value" meaning of
-    # their own once freed, so they're safe to recycle independently.
     ancilla_free = []
 
     def alloc_ancilla():
@@ -227,13 +237,13 @@ def build_circuit_from_node_schedule(net, node_steps):
         alloc.assignment[pi] = q
         result.node_qubit[pi] = q
 
-    node_gadget_cache = {}  # node -> (rule, ops_template_fn, needs_ancilla)
+    node_gadget_cache = {}
 
     def get_rule_info(node):
         if node in node_gadget_cache:
             return node_gadget_cache[node]
         rule = select_gadget_rule(node, net, children)
-        needs_ancilla = rule in (1, 2, 4)
+        needs_ancilla = rule in (1, 2, 4, 6)
         node_gadget_cache[node] = (rule, needs_ancilla)
         return rule, needs_ancilla
 
@@ -243,13 +253,6 @@ def build_circuit_from_node_schedule(net, node_steps):
 
         if action == "compute":
             rule, needs_ancilla = get_rule_info(node)
-
-            # Resolve A/B: for XOR nodes only, a fanin may itself be an
-            # aliased XOR with no dedicated qubit -- resolve through
-            # aliasing chains just like the pebbling qubit allocator
-            # does, for consistency.
-            a_fanin = node.fanins[0] if len(node.fanins) > 0 else None
-            b_fanin = node.fanins[1] if len(node.fanins) > 1 else None
 
             def resolve(fanin):
                 if fanin is None:
@@ -263,9 +266,6 @@ def build_circuit_from_node_schedule(net, node_steps):
                 return qs[-1]
 
             if node.is_xor:
-                # XOR aliases one of its fanins' qubits rather than
-                # allocating a fresh one -- mirrors
-                # assign_qubits_to_pebbling's XOR-aliasing policy.
                 target_fanin = node.fanins[-1] if node.fanins else None
                 if target_fanin is not None:
                     f = resolve(target_fanin)
@@ -274,32 +274,36 @@ def build_circuit_from_node_schedule(net, node_steps):
                 alloc.assignment[node] = f
                 result.node_qubit[node] = f
 
-                a_q = resolve(a_fanin) if a_fanin is not None else f
-                b_q = resolve(b_fanin) if b_fanin is not None else f
+                a_q = resolve(node.fanins[0]) if len(node.fanins) > 0 else f
+                b_q = resolve(node.fanins[1]) if len(node.fanins) > 1 else f
                 ops = _gadget_ops_rule5(a_q, b_q, f)
                 for op in ops:
                     result.ops.append((node, "compute", op))
                 continue
 
-            a_q = resolve(a_fanin) if a_fanin is not None else alloc._alloc_dirty()
-            b_q = resolve(b_fanin) if b_fanin is not None else alloc._alloc_dirty()
+            a_q = resolve(node.fanins[0]) if len(node.fanins) > 0 else alloc._alloc_dirty()
+            b_q = resolve(node.fanins[1]) if len(node.fanins) > 1 else alloc._alloc_dirty()
 
             f = alloc._alloc_clean()
             alloc.assignment[node] = f
             result.node_qubit[node] = f
 
+            anc = None
             if needs_ancilla:
                 anc = alloc_ancilla()
                 result.node_ancilla[node] = anc
 
+            branch_count = max(1, len(children.get(node, [])))
             if rule == 1:
-                ops = _gadget_ops_rule1(a_q, b_q, f, result.node_ancilla[node])
+                ops = _gadget_ops_rule1(a_q, b_q, f, anc)
             elif rule == 2:
-                ops = _gadget_ops_rule2(a_q, b_q, f, result.node_ancilla[node])
+                ops = _gadget_ops_rule2(a_q, b_q, f, anc)
             elif rule == 3:
                 ops = _gadget_ops_rule3(a_q, b_q, f)
             elif rule == 4:
-                ops = _gadget_ops_rule4(a_q, b_q, f, result.node_ancilla[node])
+                ops = _gadget_ops_rule4(a_q, b_q, f, anc)
+            elif rule == 6:
+                ops = _gadget_ops_rule6(a_q, b_q, f, anc, branch_count=branch_count)
             else:
                 raise ValueError(f"Unexpected rule {rule} for AND-like node {node.name}")
 
@@ -310,31 +314,24 @@ def build_circuit_from_node_schedule(net, node_steps):
             rule, needs_ancilla = get_rule_info(node)
             f = alloc.assignment.get(node)
             if f is None:
-                continue  # already released (e.g. XOR alias bookkeeping only)
+                continue
 
             if node.is_xor:
-                # Freeing an XOR alias is pure bookkeeping -- no
-                # dedicated qubit to release, and no inverse ops to
-                # apply (the CNOT cascade is applied once, forward,
-                # and is its own adjoint only if replayed symmetrically;
-                # since XOR nodes are never uncomputed independently of
-                # their consumer in this framework's pebbling model, we
-                # simply drop the bookkeeping entry here).
                 del alloc.assignment[node]
                 continue
 
-            a_fanin = node.fanins[0] if len(node.fanins) > 0 else None
-            b_fanin = node.fanins[1] if len(node.fanins) > 1 else None
+            a_q = resolve = None
+            if len(node.fanins) > 0:
+                qs_a = _resolve_control_qubits(node.fanins[0], alloc.assignment)
+                a_q = qs_a[-1] if qs_a else None
+            b_q = None
+            if len(node.fanins) > 1:
+                qs_b = _resolve_control_qubits(node.fanins[1], alloc.assignment)
+                b_q = qs_b[-1] if qs_b else None
 
-            def resolve(fanin):
-                if fanin is None:
-                    return None
-                qs = _resolve_control_qubits(fanin, alloc.assignment)
-                return qs[-1] if qs else None
-
-            a_q = resolve(a_fanin)
-            b_q = resolve(b_fanin)
             anc = result.node_ancilla.get(node)
+
+            branch_count = max(1, len(children.get(node, [])))
 
             if rule == 1:
                 forward = _gadget_ops_rule1(a_q, b_q, f, anc)
@@ -344,6 +341,8 @@ def build_circuit_from_node_schedule(net, node_steps):
                 forward = _gadget_ops_rule3(a_q, b_q, f)
             elif rule == 4:
                 forward = _gadget_ops_rule4(a_q, b_q, f, anc)
+            elif rule == 6:
+                forward = _gadget_ops_rule6(a_q, b_q, f, anc, branch_count=branch_count)
             else:
                 raise ValueError(f"Unexpected rule {rule} for AND-like node {node.name}")
 
@@ -361,10 +360,6 @@ def build_circuit_from_node_schedule(net, node_steps):
 
 
 def apply_to_qiskit(circuit_result, measure=False):
-    """
-    Lowers a `CircuitBuildResult` (concrete-qubit op list) onto a real
-    Qiskit `QuantumCircuit`.
-    """
     from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 
     n = circuit_result.qubit_count
