@@ -1,0 +1,496 @@
+\section{Proposed}
+\label{Pro}
+
+\subsection{Dirty Ancilla Node Gadgets}
+\label{sub-synth}
+Here we take the dirty ancilla construction in~\ref{sub-mct}, and create a gadget to
+realize an XAG AND node using dirty ancilla. First, we separate the construction into
+two parts, as in~\figref{fig-dirt-mct-org}: we label these \emph{compute}, and \emph{uncompute}.
+We observe that the Toffoli gate in compute can be replaced with a single target controlled
+gate for an arbitrary function F; that is, it's a gate that flips its target bit when a
+function F is true. We can implement this function F as a quantum
+subcircuit~\cite{bib-amy-phase-state}, and so we can realize a recursive construction, depicted
+in~\figref{fig-compute}. The Toffoli gate in the uncompute gadget can thus be replaced with the
+gate F's adjoint. For a relative phase gate, this means implementing F's components' adjoints in
+reverse, to realize a gate that implements the same function, but with the opposite relative phase
+~\cite{bib-maslov-rtof}.
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{img/fig-gadget-decomp.tex}
+  }
+  \caption{Dirty MCT decomposition base}
+  \label{fig-dirt-mct-org}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-CZ-and}
+  }
+  \caption{Compute gadget}
+  \label{fig-compute}
+\end{figure}
+
+\begin{table*}[t]
+\centering
+\small  % <-- set your text size here: \normalsize, \small, or \footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{0.9}
+  \begin{tabular}{c|c|p{0.16\textwidth}|c}
+    \# & Node & Conditions & Gadget \\\hline
+    1 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_and}} &
+      One of A or B are primary inputs and the other is a fanin from another node. All fanouts F are intermediate fanouts &
+      \resizebox{0.60\textwidth}{!}{\input{fig-prop-and}}\\\hline
+    2 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_and}} &
+      Both A and B are fanins from other nodes &
+      \resizebox{0.60\textwidth}{!}{\input{fig-prop-and-node-fanin}}\\\hline
+    3 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_and}} &
+      A and B are primary inputs &
+      \resizebox{0.60\textwidth}{!}{\input{fig-rtof}}\\\hline
+    4 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_and}} &
+      F is a primary output or fans out into an XOR node that is a primary output &
+      \resizebox{0.60\textwidth}{!}{\input{fig-prop-last-small}}\\\hline
+    4 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_fanout}} &
+      A is an AND node that has multiple fanouts &
+      \resizebox{0.60\textwidth}{!}{\input{fig-prop-multi-fanout}}\\\hline
+    5 &
+      \resizebox{0.09\textwidth}{!}{\input{xag_xor}} &
+      Any XOR node &
+      \resizebox{!}{1.4cm}{\input{fig-and}}
+  \end{tabular}
+\caption{Dirty Ancilla Gadgets}
+\label{fig-gadgets}
+\end{table*}
+
+We utilize the fact that the CCZ has two complementary implementations to our advantage by replacing the left CCZ
+gate with~\figref{fig-cnot-t-ccz} and the right with \figref{fig-alt-cnot-t-ccz}. In so doing we can combine their
+sum-of-paths to get the below sum-of-paths equation:
+
+\begin{equation}
+  \label{eq-toff-tot}
+  \begin{aligned}
+    &\frac{1}{4}z + \frac{1}{4}a + \frac{1}{4}f - \frac{1}{4}(z \oplus a) \\
+    &\qquad -\frac{1}{4}(z \oplus f) - \frac{1}{4}(a \oplus f) + \frac{1}{4}(z \oplus a \oplus f)\\
+    &- \frac{1}{4}z - \frac{1}{4}(xy \oplus a) - \frac{1}{4} f + \frac{1}{4}(z \oplus xy \oplus a) \\
+    &\qquad + \frac{1}{4}(z \oplus f) + \frac{1}{4}(xy \oplus a \oplus f) - \frac{1}{4}(z \oplus xy \oplus a \oplus f)
+  \end{aligned}
+\end{equation}
+
+This causes some cancellations, and we are left with:
+
+\begin{equation}
+  \label{eq-toff-simp}
+  \begin{aligned}
+    &\frac{1}{4}a - \frac{1}{4}(z \oplus a) - \frac{1}{4}(xy \oplus a) + \frac{1}{4}(z \oplus xy \oplus a)  \\
+    &+ \frac{1}{4}(z \oplus a \oplus f) - \frac{1}{4}(a \oplus f) + \frac{1}{4}(xy \oplus a \oplus f) \\
+    &- \frac{1}{4}(z \oplus xy \oplus a \oplus f)
+  \end{aligned}
+\end{equation}
+
+Observe that the first line in\eqnref{eq-toff-simp} contains only terms that have no dependence on $f$.
+That means we can bring them out from the summation to create a relative phase version of the compute
+gadget, which we depict in~\figref{fig-dirty-gadget-rp}. This means that we can implement the compute
+gadget with the same T-count as a relative phase Toffoli gate. We can similarly formulate an uncompute
+gadget that is this gadget's conjugate, in order to uncompute the value for the same cost. This implies
+that any intermediate computation using dirty ancilla can be performed with the same cost as a relative
+phase Toffoli gate. 
+
+The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. This means that the T-count of
+implementing the output node gadget is 8, so that the difference in T-count between the clean ancilla and
+the dirty ancilla decompositions is dependent on the number of these output nodes, which is the number of
+output bits of the Boolean function $m$. This means that for an MCT gate, the difference between clean
+ancilla and dirty ancilla is 1 T-gate. We can implement these as two RTOF gates.
+%% \begin{table*}[t]
+%%   \hspace{-0.5cm}
+%% \centering
+%% \scalebox{0.9}{
+%%   \begin{tabular}{p{0.05\textwidth}|p{0.10\textwidth}|p{0.10\textwidth}|p{0.75\textwidth}}
+%%     \# & Node & Conditions & Gadget \\\hline
+%%        {1}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_and}
+%%        }
+%%        &
+%%        One of A or B are primary inputs and the other is a fanin from another node.
+%%        All fanouts F are intermediate fanouts
+%%        &
+%%        \scalebox{0.9} {
+%%          \input{fig-prop-and}
+%%        }\\\hline
+%%        {2}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_and}
+%%        }
+%%        &
+%%        Both A and B are fanins from other nodes
+%%        &
+%%        \scalebox{0.9} {
+%%          \input{fig-prop-and-node-fanin}
+%%        }\\\hline
+%%        {3}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_and}
+%%        }
+%%        &
+%%        A and B are primary inputs
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{fig-rtof}
+%%        }\\\hline
+%%        {4}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_and}
+%%        }
+%%        &
+%%        F is a primary output or fans out into an XOR node that is a primary output
+%%        &
+%%        \scalebox{0.9} {
+%%          \input{fig-prop-last-small}
+%%        }\\\hline
+%%        {4}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_fanout}
+%%        }
+%%        &
+%%        A is an AND node that has multiple fanouts
+%%        &
+%%        \scalebox{0.8} {
+%%          \input{fig-prop-multi-fanout}
+%%        }\\\hline
+%%        {5}
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{xag_xor}
+%%        }
+%%        &
+%%        Any XOR node
+%%        &
+%%        \scalebox{1.0} {
+%%          \input{fig-and}
+%%        }
+%%   \end{tabular}
+%% }
+%% \caption{Dirty Ancilla Gadgets}
+%% \label{fig-gadgets}
+%% \end{table*}
+
+%% \begin{table*}[t]
+%% \centering
+%% \begin{tabular}{p{0.25\textwidth}|p{0.24\textwidth}|p{1.5\textwidth}}
+%%   Node & Conditions & Gadget \\\hline
+%%   \subfloat[AND-node]{
+%%     \makebox[0.25\textwidth][c]{\input{xag_and_node}
+%%   }
+%%   &
+%%   F and G are primary inputs and all fanouts are intermediate fanouts
+%%   &
+%%   \subfloat[AND-gadget]{
+%%     \makebox[\textwidth][c]{\input{fig-prop-and}}
+%%   }
+%% \end{tabular}
+%% \caption{Phase Gadgets}
+%% \label{fig-gadgets}
+%% \end{table*}
+
+
+%% The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. Observe, however that
+%% $\frac{1}{4}a - \frac{1}{4}(z \oplus a) = - \frac{1}{4}z + \frac{1}{2}(a)$. The $\frac{1}{2}$ coefficient
+%% can be implemented by an S gate, which is a Clifford gate and has a much more efficient fault-tolerant
+%% implementation in most error correcting codes. This means that the T-count of implementing the output
+%% node gadget is 7, the exact same as the Toffoli gate which is used as an output node in clean ancilla
+%% decomposition.
+
+\begin{figure}
+  \scalebox{0.6} {
+    \input{fig-prop-and}
+  }
+  \caption{Relative Phase version of dirty ancilla intermediate compute gadget}
+  \label{fig-dirty-gadget-rp}
+\end{figure}
+
+\subsection{Proposed Method}
+
+Our proposed method is as follows
+
+\begin{enumerate}
+\item Get the next node in the traversal of the XAG, usually from the input
+\item Create a subcircuit according to~\tabref{fig-gadgets}
+\item Pass on this subcircuit to the next iteration of the algorithm
+\item If this node fans out into a primary output, or an XOR node that fans out
+  into a primary output take the complement of the passed down subcircuit and set
+  it to act on the ancilla that the node uses.
+\item If the node is dependent on another subcircuit/subgraph, block until that subcircuit is
+  processed.
+\item Terminate when all nodes have been processed.
+\end{enumerate}
+
+\begin{example}
+  \label{ex-dirty-xag}
+  We again generate the XAG for~\figref{fig-xag}. Starting from $x_5$ and $x_4$, we
+  generate the node they feed into as an RTOF, and pass this RTOF onto the next stage of the iteration.
+  We also generate the node taking in $x_2$ and $x_3$, and see that it feeds into an XOR node that
+  fans out into a primary output. We generate a Toffoli, and block for the other input.
+  We next generate that node's fanout to $x_3$, Because this takes in a fanin from a primary
+  input and another node, we plug the RTOF passed down from the previous iteration as $A$
+  in gadget\#1, and pass this subcircuit down to the next part of the iteration. We move onto
+  the XOR node taking in $x_2$. Since that is an XOR, we generate a subcircuit using a CNOT with
+  $x_2$ as an input and replace it in gadget\#4 along with the passed down subcircuit, and pass this
+  subcircuit down further. We again repeat the AND procedure for the $x_1$ node the XOR feeds into,
+  and feed that output to the next step. Once we have reached the last XOR node, we process both
+  the Toffoli feeding into it and the other branch, and generate the full circuit. The full circuit
+  is depicted in~\figref{fig-prop-decomp}. We can verify from this diagram that the T-count of this
+  is indeed 1 more than the T-count of~\figref{fig-xag-qc} after optimizing it to use RTOF to reduce
+  its T-count.
+\end{example}
+
+\begin{figure*}[t]
+  \centering
+  \scalebox{0.8} {
+    \input{fig-prop-decomp}
+  }
+  \caption{Synthesis of circuit in Example~\ref{ex-dirty-xag}}
+  \label{fig-prop-decomp}
+\end{figure*}
+  
+%% \begin{algorithm}[h]
+%%   \caption{Proposed Method}
+%%   \label{alg-prop}
+%%   \begin{algorithmic}[1]
+
+%%     \State $QC \gets$ empty quantum circuit
+%%     \State $xag \gets$ XOR-And-Inverter Graph of the function
+%%     \State $QC \gets \textsc{parseXAG}(xag, QC)$
+
+%%     \Function{parseXAG}{xag, QC}
+%%     \If{$node \gets$ $next\_node(xag)$}
+%%        \State $node \gets$ $next\_node(xag)$ \Comment{This is set by a traversal algorithm}
+%%     \Else
+%%        \State \Return $QC$
+%%     \EndIf
+    
+%%     \Switch{}
+%%     \Case{$node$ is XOR}
+%%       \State $subQC \gets$ generate \#4
+%%     \EndCase
+%%     \Case{$node$ is AND and $A$ and $B$ are primary inputs}
+%%       \State $subQC \gets$ generate \#2
+%%     \EndCase
+%%     \Case{$node$ is AND node output is primary output}
+%%          \State $subQC \gets$ generate \#3
+%%          \State $Uncompute \gets$ QC acting on ancilla bit of subQC
+%%          \State $subQC \gets$ Uncompute appended to subQC
+%%     \EndCase
+%%     \Case{$node$ is AND and one of $A$, $B$ is primary input}
+%%          \State $A$ or $B$ $\gets$ QC \Comment{QC is the subcircuit implementing $A$ or $B$}   
+%%          \State $subQC \gets$ generate \#1
+%%     \EndCase
+%%     \EndSwitch
+    
+%%     \State $next_xags \gets$ subgraphs from $node$'s fanouts
+%%     \For{$xag \in next\_xags$}
+%%         \State $retQC$ + $parseXAG(xag, subQC)$
+%%     \EndFor
+%%     \State
+%%     \Return $retQC$
+%%     \EndFunction
+%%   \end{algorithmic}
+%% \end{algorithm}
+
+\subsection{MCT Clean and Dirty Ancilla Decomposition Implications}
+
+Observe that the XAG for the $n$-input AND function is the chain of AND nodes in~\figref{fig-mct-xag}.
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-mct-xag}
+  }
+  \caption{XAG for an MCT gate}
+  \label{fig-mct-xag}
+\end{figure}
+
+This allows us to create a a quantum circuit based off the gadgets in~\tabref{fig-gadgets}. This is depicted
+in~\figref{fig-mct-gadgets}. 
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-prop-and-ex}
+  }
+  \caption{Synthesis of~\figref{fig-mct-xag} using dirty ancilla gadgets}
+  \label{fig-mct-gadgets}
+\end{figure}
+
+This construction is remarkably similar to the ``V-chain'' that is created when the clean ancilla 
+decomposition is used, such as in~\figref{fig-clean-mct}. This demonstrates that the difference in
+cost between a dirty ancilla decomposition and a clean ancilla decomposition is the cost of the
+final $\wedge$ gadget, which uses one more T-gate than the Toffoli gate that the clean ancilla
+decomposition uses.
+
+\subsection{Pebbling Game}
+
+Boolean Logic Network synthesis methods can also use a method known as a ``pebbling game''.
+In such a pebbling game, steps are arranged to compute and uncompute nodes such that the
+maximum number of qubits that need to be computed at any one time is less than a specified
+number $k$, equal to the number of clean ancilla provided to the 
+
+
+\section{Node-Level Pebbling as Incremental SAT}
+
+Following the classical reversible-pebbling encoding, we introduce a
+Boolean state variable $p_{v,i}$ for every node $v \in V$ and time
+step $i \in \{0,\dots,K\}$, denoting whether $v$ is pebbled at step
+$i$. An auxiliary activity variable $a_{v,i}$ marks whether $v$'s
+state changed between steps $i-1$ and $i$. Let $P$ denote the pebble
+budget and $E$ the fanin relation ($(v,w) \in E$ iff
+$w \in \mathrm{fanin}(v)$).
+
+\paragraph{Initial and final clauses.}
+At time $0$ every node is unpebbled; at time $K$ every primary output
+must be pebbled and every non-output node must be unpebbled:
+\begin{equation}
+\bigwedge_{v \in V} \bar p_{v,0}
+\;\wedge\;
+\bigwedge_{v \in O} p_{v,K}
+\;\wedge\;
+\bigwedge_{v \notin O} \bar p_{v,K}.
+\end{equation}
+
+\paragraph{Move clauses.}
+A node may only toggle its pebble state at step $i+1$ if every one of
+its fanins is pebbled both immediately before and immediately after
+the transition:
+\begin{equation}
+\bigwedge_{i=1}^{K}\;\bigwedge_{(v,w)\in E}
+\Big(\big(p_{v,i}\oplus p_{v,i+1}\big) \rightarrow
+\big(p_{w,i}\wedge p_{w,i+1}\big)\Big).
+\end{equation}
+
+\paragraph{Cardinality clauses.}
+At every step at most $P$ nodes may be simultaneously pebbled:
+\begin{equation}
+\bigwedge_{i=0}^{K}\Big(\sum_{v\in V} p_{v,i} \le P\Big).
+\end{equation}
+
+These three clause families are exactly what \texttt{Z3PebbleSolver}
+constructs (\texttt{init}, \texttt{add\_step}, \texttt{solve}), using
+Z3's \texttt{PbLe} pseudo-Boolean primitive for the cardinality
+constraint and \texttt{Implies}/\texttt{And} for the move clauses. The
+solver is invoked \emph{incrementally}: $K$ starts at $0$ and is
+increased one step at a time (via \texttt{Solver.push}/\texttt{pop})
+until a satisfying assignment is found or a step cap is reached, at
+which point $P$ is optionally increased and the search restarts
+(\texttt{pebble}, \texttt{find\_min\_pebbles}).
+
+\emph{Feasibility bound.} Because reversible pebbling's overlapping
+compute/uncompute phases can require more simultaneous pebbles than
+there are primary inputs, no fixed function of $|V_{PI}|$ is a safe
+upper bound on $P$; the framework instead bounds escalation by
+$|V|$, the only value guaranteed sufficient, and by $|O|$ as a lower
+bound (since every output must be pebbled simultaneously at $K$).
+
+\section{Gate-Group Construction}
+
+To reduce problem granularity before re-solving at a coarser level,
+every primary-input-to-primary-output path in $G$ is traversed and
+partitioned into \emph{gate groups}. Each group $g$ carries two node
+lists: $\mathrm{clean}(g)$ (nodes whose value is retained as the
+group's output and later explicitly uncomputed or preserved as a PO)
+and $\mathrm{dirty}(g)$ (transient workspace nodes, freed once the
+group finishes). Algorithm~\ref{alg:gategroup} summarizes the
+traversal.
+
+\begin{algorithm}
+\caption{Gate-group construction from PI--PO paths}
+\label{alg:gategroup}
+\begin{algorithmic}[1]
+\State $\mathit{visited} \gets \emptyset$; $\mathit{gates} \gets []$
+\State $g \gets$ new empty gate; $c \gets 0$ \Comment{running dirty count}
+\ForAll{PI$\to$PO path $\pi$ in $G$}
+  \For{$v \in \pi$ in order}
+    \If{$v \in V_{PI}$} \State \textbf{continue} \Comment{always available}
+    \ElsIf{$v \in O$}
+      \State add $v$ to $\mathrm{clean}(g)$; finalize $g$; $c\gets0$
+      \State \textbf{break} (path fully consumed)
+    \ElsIf{$v$ is XOR $\wedge\, v \notin \mathit{visited}$}
+      \State add $v$ to $\mathrm{clean}(g)$; finalize $g$; $c\gets0$
+    \ElsIf{$c = P-1$} \Comment{pebble-limit rule}
+      \State add $v$ to $\mathrm{clean}(g)$; finalize $g$; $c\gets0$
+    \ElsIf{$v$ feeds a 2-input AND $u$ with an}
+    \State \hspace{1em}intermediate co-fanin $\wedge\, v\notin\mathit{visited}$
+      \State add $v$ to $\mathrm{clean}(g)$; finalize $g$; $c\gets0$
+      \State \textbf{break}
+    \Else
+      \State add $v$ to $\mathrm{dirty}(g)$; $c \gets c+1$
+      \Comment{Rule 4: no finalize}
+    \EndIf
+    \State $\mathit{visited} \gets \mathit{visited} \cup \{v\}$
+  \EndFor
+\EndFor
+\State finalize any non-empty trailing $g$
+\State \Return $\mathit{gates}$
+\end{algorithmic}
+\end{algorithm}
+
+Every finalizing rule is guarded by $\mathit{visited}$, so a node
+reachable from multiple paths (fan-out $>1$) -- including a shared
+XOR node -- is assigned to exactly one gate, the first time it is
+reached; later paths simply skip past an already-visited node. This
+removes the need for a post-hoc merge pass and guarantees that the
+induced gate-dependency graph is acyclic, since it is derived
+directly from $G$'s own topological order. A node is registered as a
+\emph{dependency} of $g$ only at the exact moment it is inserted into
+$g$'s clean/dirty lists -- never merely because traversal passed over
+an already-finalized node belonging to a different, earlier gate --
+which was found to be essential for avoiding spurious cross-gate
+dependency cycles.
+
+\section{Gate-Level Pebbling}
+
+\texttt{GatePebbleSolver} re-applies the same three clause families
+of Section~III, but over gate identifiers rather than node
+identifiers: $p_{g,i}$ denotes whether gate $g$ is ``on'' at step
+$i$, move clauses require a gate's producer gates (derived from
+$\mathrm{fanin}$ relations of its dependency nodes) to be pebbled
+before and after a toggle, and the cardinality clause is restricted
+to \emph{AND-type} gates only:
+\begin{equation}
+\bigwedge_{i}\Big(\sum_{g:\ \mathrm{counts}(g)} p_{g,i} \le P\Big),
+\end{equation}
+where $\mathrm{counts}(g)$ excludes gates whose $\mathrm{clean}(g)$
+is a single XOR node with no dirty pebbles, since the CNOT-cascade
+gadget for XOR needs no ancilla. Gates owning a primary output are
+additionally constrained to remain pebbled at $K$, mirroring the
+node-level final clause; without this refinement the empty schedule
+($K=0$) would trivially satisfy the naive ``all gates off'' final
+condition.
+
+\section{Qubit Assignment and Circuit Synthesis}
+
+A solved gate-level schedule is replayed deterministically
+(\texttt{assign\_qubits\_to\_pebbling}) to assign physical qubit
+indices: non-XOR clean-pebble nodes are allocated a fresh
+guaranteed-$\ket{0}$ qubit and freed at their gate's uncompute event;
+XOR clean-pebble nodes instead \emph{alias} the qubit of one of their
+own fanins, since an XOR is computed in place via a CNOT cascade;
+dirty-pebble nodes are reclaimed eagerly immediately after their own
+gate's compute step, since no other gate ever depends on them. A
+liveness assertion verifies no two simultaneously-live non-aliased
+nodes ever share a qubit. Each node is finally synthesized into a
+symbolic Clifford+T gadget via one of six rules keyed on fan-in/fan-out
+structure (Toffoli-to-T-gate decompositions for AND nodes, a CNOT
+cascade for XOR nodes), and gadgets are replayed onto a Qiskit
+circuit for QASM export.
+
