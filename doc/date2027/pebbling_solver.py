@@ -45,12 +45,16 @@ The NEW approach (`build_gate_groups`, this file) instead:
      "output" (clean pebble) of its group if it is a primary output OR
      has at least one consumer owned by a different group; otherwise it
      is "internal" (dirty pebble).
-  4. SPLITS any group whose `outputs` mix a genuine primary output (PO)
+  4. MERGES sibling fanout groups where beneficial (see "SIBLING
+     FANOUT MERGING" below) -- a node with multiple non-XOR consumers
+     scattered across different groups can be consolidated into one
+     group when doing so stays convex and within budget.
+  5. SPLITS any group whose `outputs` mix a genuine primary output (PO)
      with a non-PO output (see "MIXED PO GROUPS" below) -- this step is
      essential and was missing from an earlier revision.
-  5. Derives gate-level dependencies strictly from boundary inputs
+  6. Derives gate-level dependencies strictly from boundary inputs
      (a group's external fanins), never from incidental path traversal.
-  6. Validates the result: unique ownership (partition), and acyclicity
+  7. Validates the result: unique ownership (partition), and acyclicity
      of the induced gate-dependency graph (which is guaranteed by
      construction, but checked defensively).
 
@@ -104,6 +108,50 @@ existing T-count comparisons (e.g. run_caterpillar_experiments.py)
 after switching if you want directly comparable numbers.
 
 ======================================================================
+SIBLING FANOUT MERGING (`_merge_sibling_fanout_groups`)
+======================================================================
+
+Rule 6 of the gadget synthesis table (see `select_gadget_rule`, rule
+4/"multiple fanouts" case) recognizes that when a single AND node `A`
+feeds MULTIPLE downstream consumers (e.g. `B_n = A & something` and
+`C_n = A & something_else`), those consumers can share a single copy
+of `A`'s ancilla/ result rather than each recomputing or re-fanning-out
+`A` independently. This is cheaper in both pebble usage and gate count
+when done as ONE group instead of two separate groups that merely
+happen to get scheduled in the same time step.
+
+`_merge_sibling_fanout_groups`, run as a new phase between Phase 1
+(partition) and Phase 2 (boundary computation), looks for exactly this
+shape:
+  - a node `A` (owned by some group `G_A`) with 2+ DIRECT non-XOR
+    consumers,
+  - where those consumers currently belong to DIFFERENT groups
+    (`G_B`, `G_C`, ...),
+  - and where the consumers' owning groups, together with everything
+    between them in topological order, can be merged into ONE group
+    without breaking CONVEXITY (a merged group must still be a
+    CONTIGUOUS RANGE of the topological order -- see module docstring,
+    point 2) and without exceeding a permissive pebble-budget slack
+    factor (`merge_pebble_slack`).
+
+This is intentionally CONSERVATIVE: it only merges groups that are
+already topologically adjacent (i.e. no other group's nodes lie
+strictly between them), since merging non-adjacent groups would force
+absorbing every node in between too, which could pull in unrelated
+gates and blow the budget for no benefit. In practice, when
+`topo_order="dependency_chain"` is used, true sibling fanout consumers
+are often already placed back-to-back by that heuristic, making them
+adjacency-eligible for this merge pass.
+
+Merging is applied greedily, in increasing order of group id, and is
+NOT run to an exhaustive fixed point -- it makes one left-to-right
+pass, which is sufficient for the common case of a single shared
+ancilla feeding a small, localized cluster of consumers. Like
+`_split_mixed_po_groups`, it always recomputes boundaries via
+`_compute_boundaries` after any merge, so `outputs`/`internal`/
+`inputs` stay consistent with the new ownership.
+
+======================================================================
 MIXED PO GROUPS (the bug this revision fixes)
 ======================================================================
 
@@ -124,22 +172,22 @@ fail with a leftover live qubit (e.g. a shared AND-monomial node like
 "and1_0_1") even after the qubit-reclamation-timing fix in a prior
 revision.
 
-The fix (`_split_mixed_po_groups`, run as Phase 2.5 of
-`build_gate_groups`) detects any group whose `outputs` mix a genuine PO
-with a non-PO output, and splits that group's node list at the
-position immediately after the LAST such non-PO output node: nodes up
-to and including that point become one group (with no PO among its
-outputs, so it is now free to uncompute normally), and the remainder
-(containing the PO) becomes a second group. Because groups are always
-contiguous ranges of the topological order, splitting one range into
-two contiguous sub-ranges preserves the convexity/acyclicity guarantee
-established in Phase 1 -- no additional cycle-checking logic is
-required beyond the same defensive validation already run at the end.
-This is applied repeatedly (a fixed-point loop) since a single split
-could, in principle, still leave a "mixed" situation if a group
-contained more than one PO interspersed with non-PO outputs; the loop
-terminates because the total node count is fixed and the group count
-only ever increases.
+The fix (`_split_mixed_po_groups`, run as the phase after sibling-
+fanout merging in `build_gate_groups`) detects any group whose
+`outputs` mix a genuine PO with a non-PO output, and splits that
+group's node list at the position immediately after the LAST such
+non-PO output node: nodes up to and including that point become one
+group (with no PO among its outputs, so it is now free to uncompute
+normally), and the remainder (containing the PO) becomes a second
+group. Because groups are always contiguous ranges of the topological
+order, splitting one range into two contiguous sub-ranges preserves
+the convexity/acyclicity guarantee established in Phase 1 -- no
+additional cycle-checking logic is required beyond the same defensive
+validation already run at the end. This is applied repeatedly (a
+fixed-point loop) since a single split could, in principle, still
+leave a "mixed" situation if a group contained more than one PO
+interspersed with non-PO outputs; the loop terminates because the
+total node count is fixed and the group count only ever increases.
 
 ======================================================================
 QUBIT RECLAMATION POLICY (`_replay_gate_pebbling`)
@@ -153,9 +201,9 @@ A group's `outputs` (clean pebbles) may be either:
 Case (b) values MUST eventually be freed once their owning gate's
 uncompute event fires -- only case (a) (true PO membership, checked
 against `net.pos`, NOT merely `group.outputs`) is exempt from being
-freed. With the Phase 2.5 fix above, every group's outputs are now
-either ALL genuine POs or contain NO genuine PO at all, so a group with
-any non-PO output is now guaranteed to actually execute an
+freed. With the mixed-PO-group fix above, every group's outputs are
+now either ALL genuine POs or contain NO genuine PO at all, so a group
+with any non-PO output is now guaranteed to actually execute an
 `uncompute_gate` event at some point, making case (b) freeing
 reachable in practice.
 
@@ -203,17 +251,123 @@ to reclassify other multi-row AND/OR/NOR carry-logic clusters (e.g.
 EPFL adder.blif's carry-propagate gates), to avoid misclassifying
 genuine AND/OR logic as XOR.
 
+======================================================================
+MIN-STEP DIAGNOSTIC SEARCH (`find_min_gate_steps`)
+======================================================================
+
+`pebble_gates`'s own step-escalation loop only ever searches UPWARD
+for the first step count at which Z3 becomes SAT at a given
+`max_pebbles` -- it never checks whether FEWER steps would also work.
+Because `GatePebbleSolver`'s encoding has no cost/objective function
+(it only asks "does *some* valid schedule exist," never "what's the
+*cheapest* one"), any schedule it returns may contain extra,
+functionally unnecessary toggles that are pure unconstrained solver
+slack rather than something the pebble budget or dependency structure
+actually forces.
+
+`find_min_gate_steps` (and its helper `_solve_gate_steps_at_fixed_
+steps`) instead fixes `max_pebbles` and searches DOWNWARD from a
+known-SAT step count until UNSAT is hit, to find the TRUE minimum step
+count at that budget. Comparing that minimum against whatever
+`pebble_gates` originally found tells you whether a given toggle in
+the original schedule was load-bearing (still present at the true
+minimum) or just solver noise (absent once forced to the minimum).
+This is a diagnostic/debug tool, not part of the main solving hot path
+-- it performs a linear (not binary) downward search, rebuilding a
+fresh solver at each step count.
+
+======================================================================
+PO-GATE MONOTONICITY (`GatePebbleSolver.add_step`)
+======================================================================
+
+`GatePebbleSolver` only checks, via `solve()`, that PO-owning gates are
+pebbled at the MOST RECENT step examined -- it does not, on its own,
+prevent a PO-owning gate from being uncomputed and recomputed at
+EARLIER steps, since nothing besides that final check ever examines a
+PO gate's intermediate state. Combined with the encoding having no
+cost/objective function distinguishing a "clean" schedule from one
+containing gratuitous toggles, Z3 is free to include repeated
+compute/uncompute cycles for a PO-owning gate even when they serve no
+purpose whatsoever -- purely because doing so isn't explicitly
+forbidden and doesn't affect satisfiability.
+
+`add_step` adds one explicit constraint per gate in `po_gate_ids`:
+`Implies(s_cur, s_nxt)` -- i.e. once a PO-owning gate is pebbled, it
+must REMAIN pebbled in every subsequent step.
+
+Empirically confirmed (via `find_min_gate_steps`) to cost NOTHING in
+achievable step count for `adder16.blif`.
+
+======================================================================
+JUSTIFIED-RECOMPUTE CONSTRAINT (the gate-1 bug this revision fixes)
+======================================================================
+
+PO-gate monotonicity alone does NOT stop a NON-PO gate from being
+recomputed and re-uncomputed arbitrarily many times even after every
+gate that ever depended on it has permanently finished needing it.
+This was observed concretely in an `adder16.blif` schedule: gate 1's
+`outputs` are consumed ONLY by gates 2 and 3 (per `depends_on`), both
+of which compute once, at step 2, and never again -- yet gate 1 itself
+toggled on nearly every one of the subsequent 29 steps, in lockstep
+with the currently-active carry gate, purely because the shared
+`PbLe` pebble-budget constraint left room for Z3 to do so and nothing
+forbade it.
+
+The general principle missed by PO-monotonicity alone: a gate should
+never be RECOMPUTED (transition False -> True after having already
+been used and uncomputed at least once before) unless doing so is
+actually justified by some real DEPENDENT of that gate itself
+transitioning to True (i.e. becoming newly pebbled) at that same step.
+If none of a gate's dependents are becoming newly pebbled at a given
+step, there is no reason for that gate to come back to life -- nothing
+would consume it.
+
+Implementation (`GatePebbleSolver`):
+  - `self.dependents[gid]`: the REVERSE of `depends_on` -- the set of
+    gate ids that list `gid` in THEIR OWN `depends_on`. Precomputed
+    once in `__init__` from the full `gates` list.
+  - `ever_computed` state: one extra monotonic boolean per gate,
+    threaded through `add_step` alongside `s`/`a` (state/action). Once
+    True, stays True forever (`ever_next = Or(ever_cur, s_nxt)`). This
+    distinguishes a gate's FIRST-EVER compute (always allowed
+    unconditionally) from a RECOMPUTE (only allowed when justified).
+  - The new constraint, added once per non-PO gate per step:
+
+        justified = Or([
+            And(Not(dep_s_cur), dep_s_next)   # dependent newly pebbles
+            for dep_gid in self.dependents[gid]
+        ])   # False (vacuously) if the gate has NO dependents at all
+        self.slv.add(Implies(
+            And(ever_cur, Not(s_cur), s_nxt),   # a RECOMPUTE is happening
+            justified
+        ))
+
+    PO-owning gates are exempt from this (they already have full
+    monotonicity -- they never uncompute in the first place, so a
+    "recompute" can never occur for them).
+
+This directly forbids exactly the gate-1 pattern observed: since gates
+2 and 3 (gate 1's only dependents) never transition to True again
+after step 2, `justified` is False for gate 1 at every step after its
+first use, so any attempted recompute of gate 1 past that point is now
+UNSAT-forcing rather than merely "unnecessary but allowed."
+
+For gates with genuinely NO dependents at all (like the old gate-0
+case, before it became a PO-owning gate under `_split_mixed_po_groups`
+-- or any gate whose entire output set turns out to be dead code),
+`justified` is vacuously False, so such a gate may be computed once
+and uncomputed once, but never recomputed again. This subsumes and
+generalizes what PO monotonicity handles only for the PO-owning case.
+
 Everything else in this file (node-level Z3 pebbling, Reed-Muller/ESOP
 network generators, gate-level Z3 pebbling, gadget synthesis,
 Qiskit/QASM export) is unchanged in spirit from prior revisions.
 """
 
-import argparse
-import json
 import random
 from collections import defaultdict
 
-from z3 import Bool, Solver, Implies, And, sat, unsat, PbLe
+from z3 import Bool, Solver, Implies, And, Or, Not, sat, unsat, PbLe
 
 
 # ---------------------------------------------------------------------------
@@ -952,8 +1106,9 @@ def _compute_boundaries(net: PebblingNetwork, groups, pos_set, children=None):
     Populates `inputs`/`outputs`/`internal` for every group in `groups`,
     based purely on each owned node's ORIGINAL fanin/fanout edges
     against the CURRENT ownership assignment. Can be called repeatedly
-    (e.g. after `_split_mixed_po_groups` changes ownership) to
-    recompute boundaries from scratch.
+    (e.g. after `_merge_sibling_fanout_groups` or
+    `_split_mixed_po_groups` change ownership) to recompute boundaries
+    from scratch.
     """
     if children is None:
         children = net.build_children()
@@ -996,6 +1151,126 @@ def _renumber_groups(node_lists):
         g.nodes = nodes
         groups.append(g)
     return groups
+
+
+def _merge_sibling_fanout_groups(net: PebblingNetwork, groups, pos_set,
+                                  max_pebbles, merge_pebble_slack=1.5):
+    """
+    Merges topologically ADJACENT sibling groups that both consume the
+    same shared non-XOR node, so a shared ancilla/result (rule 6 of the
+    gadget synthesis table -- "A is an AND node that has multiple
+    fanouts") is computed and held ONCE by a single group, instead of
+    being spread across separate groups that only coincidentally get
+    scheduled together. See module docstring ("SIBLING FANOUT
+    MERGING") for the full rationale.
+
+    Algorithm (single left-to-right greedy pass over the CURRENT group
+    list, in gid order):
+      For each node `A` with 2+ direct non-XOR consumers:
+        - Find the set of groups owning those consumers.
+        - If that set has more than one group AND those groups are
+          CONTIGUOUS in the current group list (i.e. their combined
+          node ranges, plus any groups fully in between, form one
+          unbroken run with no other group interleaved) -- merge all
+          groups in that contiguous run into one.
+        - The merge is only accepted if the merged group's Phase-1
+          pebble cost (sum of `_pebble_cost` over its nodes) does not
+          exceed `max_pebbles * merge_pebble_slack`. This slack factor
+          allows a BOUNDED increase in peak pebble usage in exchange
+          for fewer total gate-group toggles (see module docstring,
+          "SIBLING FANOUT MERGING" -- this is the same space/time
+          tradeoff direction as the rest of the solver, just applied
+          at grouping time instead of schedule time).
+      Only ADJACENT groups are ever merged, preserving convexity: a
+      contiguous run of already-convex (contiguous-range) groups is
+      itself still a contiguous range, so merging never violates the
+      convexity guarantee established in Phase 1.
+
+    This is a single greedy pass, not run to a fixed point -- see
+    module docstring for why this is sufficient in practice.
+
+    Returns a new list of `GateGroup` objects (freshly renumbered) with
+    boundaries recomputed via `_compute_boundaries`.
+    """
+    children = net.build_children()
+    _compute_boundaries(net, groups, pos_set, children=children)
+
+    node_owner_gid = {}
+    for g in groups:
+        for n in g.nodes:
+            node_owner_gid[n] = g.gid
+
+    # Map each gid to its index in the CURRENT group list, so we can
+    # detect contiguity purely by index adjacency.
+    gid_to_index = {g.gid: i for i, g in enumerate(groups)}
+
+    merged_index_runs = []   # list of (start_idx, end_idx) index ranges to merge
+    already_planned = set()  # indices already claimed by a planned merge run
+
+    for node in net.nodes:
+        if node.is_pi or node.is_xor:
+            continue
+
+        non_xor_consumers = [
+            ch for ch in children.get(node, [])
+            if not ch.is_xor
+        ]
+        if len(non_xor_consumers) < 2:
+            continue
+
+        consumer_gids = {node_owner_gid[ch] for ch in non_xor_consumers
+                          if ch in node_owner_gid}
+        if len(consumer_gids) < 2:
+            continue  # already all in one group
+
+        consumer_indices = sorted(gid_to_index[gid] for gid in consumer_gids)
+        lo, hi = consumer_indices[0], consumer_indices[-1]
+        run_indices = list(range(lo, hi + 1))
+
+        # Reject if this run overlaps a run already planned (keep it
+        # simple: first-come-first-served in node topological order).
+        if already_planned.intersection(run_indices):
+            continue
+
+        # Compute the merged group's Phase-1 pebble cost to check the
+        # slack budget before committing to the merge.
+        merged_nodes = []
+        for idx in run_indices:
+            merged_nodes.extend(groups[idx].nodes)
+        merged_cost = sum(_pebble_cost(n) for n in merged_nodes)
+
+        if merged_cost > max_pebbles * merge_pebble_slack:
+            continue  # merge would blow the (slackened) pebble budget
+
+        if len(run_indices) > 1:
+            merged_index_runs.append((lo, hi))
+            already_planned.update(run_indices)
+
+    if not merged_index_runs:
+        return groups
+
+    merged_index_runs.sort()
+
+    # Rebuild the group list, replacing each planned run with a single
+    # merged group, and leaving all other groups untouched.
+    node_lists = []
+    i = 0
+    run_map = {lo: hi for lo, hi in merged_index_runs}
+    while i < len(groups):
+        if i in run_map:
+            hi = run_map[i]
+            combined_nodes = []
+            for idx in range(i, hi + 1):
+                combined_nodes.extend(groups[idx].nodes)
+            node_lists.append(combined_nodes)
+            i = hi + 1
+        else:
+            node_lists.append(groups[i].nodes)
+            i += 1
+
+    new_groups = _renumber_groups(node_lists)
+    _compute_boundaries(net, new_groups, pos_set, children=children)
+    return new_groups
 
 
 def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
@@ -1153,7 +1428,8 @@ def _dependency_chain_topo_order(net: PebblingNetwork):
     return order
 
 
-def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="dependency_chain"):
+def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="dependency_chain",
+                       merge_sibling_fanouts=True, merge_pebble_slack=1.5):
     """
     Gate-group construction algorithm. See module docstring for the
     full rationale. Steps:
@@ -1178,15 +1454,23 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
          within the group), and collect `inputs` (external fanins
          actually used).
 
-      2.5. Split any group whose `outputs` mix a genuine PO with a
-           non-PO output (`_split_mixed_po_groups`) -- see module
-           docstring ("MIXED PO GROUPS").
+      2.5. Merge sibling fanout groups (`_merge_sibling_fanout_groups`,
+           only if `merge_sibling_fanouts=True`) -- consolidates
+           topologically adjacent groups that both consume the same
+           shared non-XOR node, per rule 6 of the gadget synthesis
+           table. See module docstring ("SIBLING FANOUT MERGING").
 
-      3. Dependency derivation: for each (possibly re-split) group,
-         look up the owner group of each of its `inputs`; that owner's
-         gid is added to `depends_on`.
+      3. Split any group whose `outputs` mix a genuine PO with a
+         non-PO output (`_split_mixed_po_groups`) -- see module
+         docstring ("MIXED PO GROUPS"). Run AFTER sibling-fanout
+         merging so a merge can never accidentally reintroduce a mixed
+         PO/non-PO group without being caught by this pass.
 
-      4. Validation: confirm every non-PI node is owned by EXACTLY one
+      4. Dependency derivation: for each (possibly merged/re-split)
+         group, look up the owner group of each of its `inputs`; that
+         owner's gid is added to `depends_on`.
+
+      5. Validation: confirm every non-PI node is owned by EXACTLY one
          group (`_validate_gate_partition`), and that the resulting
          gate-dependency graph is acyclic (`find_gate_dependency_cycle`)
          -- which is guaranteed by construction (contiguous ranges of a
@@ -1203,6 +1487,11 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
         pebble-budget fill is more likely to group a node with its
         actual dependents rather than an unrelated sibling. See module
         docstring for details and a worked example.
+
+    `merge_sibling_fanouts` / `merge_pebble_slack`:
+      - See `_merge_sibling_fanout_groups` and module docstring
+        ("SIBLING FANOUT MERGING"). Set `merge_sibling_fanouts=False`
+        to fully restore prior behavior (no merging).
 
     Raises `ValueError` if `max_pebbles < len(net.pos)`, or if
     `topo_order` is not one of the recognized values.
@@ -1265,10 +1554,19 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
 
     finalize()
 
-    # --- Phase 2 + 2.5: boundary computation, then split mixed-PO groups ---
+    # --- Phase 2: boundary computation ---------------------------------------
+    _compute_boundaries(net, groups, pos_set)
+
+    # --- Phase 2.5: sibling fanout merging ------------------------------------
+    if merge_sibling_fanouts:
+        groups = _merge_sibling_fanout_groups(
+            net, groups, pos_set, max_pebbles, merge_pebble_slack=merge_pebble_slack
+        )
+
+    # --- Phase 3: split mixed-PO groups ---------------------------------------
     groups = _split_mixed_po_groups(net, groups, pos_set)
 
-    # --- Phase 3: dependency derivation ------------------------------------
+    # --- Phase 4: dependency derivation ---------------------------------------
     node_owner = {}
     for g in groups:
         for n in g.nodes:
@@ -1282,7 +1580,7 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
                 deps.add(owner_gid)
         g.depends_on = deps
 
-    # --- Phase 4: validation ------------------------------------------------
+    # --- Phase 5: validation ---------------------------------------------------
     _validate_gate_partition(net, groups)
     _validate_no_mixed_po_groups(groups, pos_set)
     cycle = find_gate_dependency_cycle(groups)
@@ -1448,10 +1746,21 @@ class GatePebbleSolver:
     the simultaneous-pebble cap, since their gadget needs no ancilla.
 
     Gates that own at least one TRUE primary output (checked against
-    `net.pos`) MUST remain pebbled at the final step. Thanks to the
-    Phase 2.5 split in `build_gate_groups`, such a gate's `outputs`
-    NEVER also contain a non-PO output, so this "never uncomputes"
-    requirement can no longer strand any non-PO value.
+    `net.pos`) MUST remain pebbled at the final step, AND (see module
+    docstring, "PO-GATE MONOTONICITY") are constrained to NEVER
+    uncompute at any earlier step either, once pebbled.
+
+    NON-PO gates are subject to a separate, more general constraint
+    (see module docstring, "JUSTIFIED-RECOMPUTE CONSTRAINT"): once a
+    non-PO gate has been computed and later uncomputed, it may only be
+    RECOMPUTED again if doing so is justified by one of its actual
+    dependents (gates that list it in their own `depends_on`)
+    transitioning to True (newly pebbling) at that same step. A gate
+    with no dependents at all may be computed once and uncomputed once,
+    but never recomputed. This directly rules out the observed
+    `adder16.blif` bug where a gate with real but early-finishing
+    dependents kept toggling for the rest of the schedule with no
+    justification.
     """
 
     def __init__(self, gates, max_pebbles, net=None):
@@ -1459,7 +1768,8 @@ class GatePebbleSolver:
         self.max_pebbles = max_pebbles
         self.slv = Solver()
         self.num_steps = 0
-        self.current = {}
+        self.current = {}       # gid -> (s, a)
+        self.ever = {}          # gid -> ever_computed Bool
         self.history = []
         self.model = None
 
@@ -1474,6 +1784,14 @@ class GatePebbleSolver:
         self.counts_toward_limit = {g.gid: not _is_xor_only(g) for g in gates}
         self.gate_deps = {g.gid: set(g.depends_on) for g in gates}
 
+        # Reverse of depends_on: dependents[gid] = gate ids that
+        # depend ON gid (i.e. gid appears in their own depends_on).
+        # Used by the justified-recompute constraint below.
+        self.dependents = defaultdict(set)
+        for g in gates:
+            for dep_gid in g.depends_on:
+                self.dependents[dep_gid].add(g.gid)
+
         pos_set = set(net.pos) if net is not None else set()
         self.po_gate_ids = {
             g.gid for g in gates if any(n in pos_set for n in g.outputs)
@@ -1482,22 +1800,28 @@ class GatePebbleSolver:
     def init(self):
         s0 = {g.gid: Bool(f"Gs_0_{g.gid}") for g in self.gates}
         a0 = {g.gid: Bool(f"Ga_0_{g.gid}") for g in self.gates}
+        ever0 = {g.gid: Bool(f"Gever_0_{g.gid}") for g in self.gates}
         for gid in s0:
             self.slv.add(s0[gid] == False)
             self.slv.add(a0[gid] == False)
+            self.slv.add(ever0[gid] == False)
         self.current = {gid: (s0[gid], a0[gid]) for gid in s0}
+        self.ever = dict(ever0)
         self.history.append(dict(self.current))
 
     def add_step(self):
         self.num_steps += 1
         s_next = {g.gid: Bool(f"Gs_{self.num_steps}_{g.gid}") for g in self.gates}
         a_next = {g.gid: Bool(f"Ga_{self.num_steps}_{g.gid}") for g in self.gates}
+        ever_next = {g.gid: Bool(f"Gever_{self.num_steps}_{g.gid}") for g in self.gates}
 
         for g in self.gates:
             gid = g.gid
             s_cur, _ = self.current[gid]
             s_nxt = s_next[gid]
             a_nxt = a_next[gid]
+            ever_cur = self.ever[gid]
+            ever_nxt = ever_next[gid]
 
             if self.gate_deps[gid]:
                 deps_now = [self.current[d][0] for d in self.gate_deps[gid]]
@@ -1507,11 +1831,42 @@ class GatePebbleSolver:
             self.slv.add(Implies(s_cur != s_nxt, a_nxt))
             self.slv.add(Implies(s_cur == s_nxt, a_nxt == False))
 
+            # ever_computed is monotonic: once True, stays True. It
+            # becomes True as soon as this gate is pebbled at all.
+            self.slv.add(ever_nxt == Or(ever_cur, s_nxt))
+
+            if gid in self.po_gate_ids:
+                # PO-GATE MONOTONICITY: once pebbled, a PO-owning gate
+                # may never be uncomputed again. Empirically confirmed
+                # (via find_min_gate_steps) to cost nothing in
+                # achievable step count for adder16.blif.
+                self.slv.add(Implies(s_cur, s_nxt))
+            else:
+                # JUSTIFIED-RECOMPUTE CONSTRAINT (see module docstring):
+                # a RECOMPUTE (transition False -> True, AFTER this
+                # gate has already been used at least once before) is
+                # only allowed if some actual dependent of this gate is
+                # ITSELF newly pebbling (False -> True) at this same
+                # step. If this gate has no dependents at all, the
+                # recompute is simply forbidden outright (it may be
+                # computed once and uncomputed once, but never again).
+                is_recompute = And(ever_cur, Not(s_cur), s_nxt)
+                dep_gids = self.dependents.get(gid, ())
+                if dep_gids:
+                    justified = Or(*[
+                        And(Not(self.current[d][0]), s_next[d])
+                        for d in dep_gids
+                    ])
+                    self.slv.add(Implies(is_recompute, justified))
+                else:
+                    self.slv.add(Not(is_recompute))
+
         limited_gates = [g for g in self.gates if self.counts_toward_limit[g.gid]]
         if limited_gates:
             self.slv.add(PbLe([(s_next[g.gid], 1) for g in limited_gates], self.max_pebbles))
 
         self.current = {gid: (s_next[gid], a_next[gid]) for gid in s_next}
+        self.ever = dict(ever_next)
         self.history.append(dict(self.current))
 
     def solve(self):
@@ -1546,6 +1901,55 @@ class GatePebbleSolver:
                         print(f"step {k}: {op} gate {gid} ({tag})")
         return seq
 
+
+def _pebbling_steps_to_json(steps):
+    """Serializes a node-level (node, action) step list to plain dicts."""
+    return [{"node": n.name, "action": action} for n, action in steps]
+
+
+def _gate_groups_to_json(gates):
+    """Serializes GateGroup objects to plain dicts for JSON dumping."""
+    out = []
+    for g in gates:
+        out.append({
+            "gid": g.gid,
+            "nodes": [n.name for n in g.nodes],
+            "outputs": [n.name for n in g.outputs],
+            "internal": [n.name for n in g.internal],
+            "inputs": [n.name for n in g.inputs],
+            "depends_on": sorted(g.depends_on),
+        })
+    return out
+
+
+def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
+                              gate_steps=None, extra=None):
+    """
+    Writes a single JSON file containing the node-level pebbling
+    sequence and/or gate groups and/or gate-level schedule, for
+    external inspection. Purely a debug/dev toggle -- does not affect
+    solving behavior.
+    """
+    import json
+    payload = {}
+    if node_steps is not None:
+        payload["node_pebbling_sequence"] = _pebbling_steps_to_json(node_steps)
+    if gate_groups is not None:
+        payload["gate_groups"] = _gate_groups_to_json(gate_groups)
+    if gate_steps is not None:
+        payload["gate_level_schedule"] = [
+            {"step": k, "gate_id": gid, "op": op, "tag": tag}
+            for (k, gid, op, tag) in gate_steps
+        ]
+    if extra:
+        payload.update(extra)
+
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+
+    print(f"\nDumped pebbling debug info to {path}")
+
+
 def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
                   auto_increase_pebbles=True, max_pebbles_cap=None, net=None,
                   dump_json=None):
@@ -1555,11 +1959,11 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
     the full solving semantics.
 
     dump_json: optional path. If set, as soon as a solution is found,
-    writes the solved gate-level schedule and gate groups (and, if
-    `net` is provided, the expanded node-level pebbling sequence) to
-    this path as JSON via `dump_pebbling_debug_json`, right before
-    returning. Purely a debug/dev toggle -- does not affect solving
-    behavior or the returned value.
+    writes the solved gate-level schedule and gate groups (and the
+    expanded node-level pebbling sequence) to this path as JSON via
+    `dump_pebbling_debug_json`, right before returning. Purely a
+    debug/dev toggle -- does not affect solving behavior or the
+    returned value.
     """
     if max_pebbles_cap is None:
         max_pebbles_cap = max(1, len(gates))
@@ -1611,6 +2015,7 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
         f"{max_pebbles} up to max_pebbles_cap={max_pebbles_cap}."
     )
 
+
 def _solve_gate_steps_at_fixed_steps(gates, max_pebbles, net, num_steps):
     """
     Builds a fresh GatePebbleSolver, adds EXACTLY `num_steps` steps
@@ -1625,18 +2030,13 @@ def _solve_gate_steps_at_fixed_steps(gates, max_pebbles, net, num_steps):
     r = s.solve()
     return r, s
 
+
 def find_min_gate_steps(gates, max_pebbles, net, start_steps=None, verbose=True):
     """
     Finds the MINIMUM number of steps for which `GatePebbleSolver` is
     SAT at a FIXED `max_pebbles` budget, by decreasing the step count
-    one at a time from `start_steps` until UNSAT is hit.
-
-    See prior discussion for full rationale: `pebble_gates`'s own
-    step-escalation loop only ever searches UPWARD for the first step
-    count at which Z3 becomes SAT -- it never checks whether FEWER
-    steps would also work, and the encoding has no cost/objective
-    function, so any returned schedule may contain unconstrained,
-    functionally unnecessary toggles.
+    one at a time from `start_steps` until UNSAT is hit. See module
+    docstring ("MIN-STEP DIAGNOSTIC SEARCH") for the full rationale.
 
     `start_steps`: an upper bound already known to be SAT (e.g. derived
     from a prior successful `pebble_gates(...)` call's returned
@@ -1644,13 +2044,25 @@ def find_min_gate_steps(gates, max_pebbles, net, start_steps=None, verbose=True)
     defaults to the same "auto" heuristic `pebble_gates` itself uses
     (`max(4, len(gates) * 4)`).
 
-    Returns (min_steps, gate_steps_at_min_steps).
+    Returns (min_steps, gate_steps_at_min_steps):
+      - min_steps: the smallest step count that is still SAT.
+      - gate_steps_at_min_steps: the extracted (k, gid, op, tag)
+        schedule AT that minimal step count (from
+        `GatePebbleSolver.extract`).
 
-    Raises `RuntimeError` if `start_steps` itself is not SAT.
+    Raises `RuntimeError` if `start_steps` itself is not SAT (i.e. your
+    assumed upper bound was wrong -- try a larger `start_steps`, e.g.
+    re-derived from a fresh `pebble_gates(...)` call).
 
-    NOTE: performs a LINEAR (not binary) downward search; each step
-    count rebuilds a fresh solver from scratch. Intended as a
-    diagnostic/debug tool, not part of the main solving hot path.
+    NOTE: this performs a LINEAR (not binary) downward search, since
+    SAT/UNSAT is not asserted here to be monotonic in step count for
+    every possible encoding subtlety (fewer steps is usually harder,
+    so binary search would likely be safe, but a linear scan avoids
+    relying on an unverified monotonicity property). Each step count
+    rebuilds a fresh solver from scratch, so this is O(start_steps)
+    solver constructions -- for large `gates` lists this may be slow;
+    consider this a diagnostic/debug tool, not part of the main solving
+    hot path.
     """
     if start_steps is None:
         start_steps = max(4, len(gates) * 4)
@@ -1685,6 +2097,7 @@ def find_min_gate_steps(gates, max_pebbles, net, start_steps=None, verbose=True)
     gate_steps = best_solver.extract(verbose=False)
     return best_steps, gate_steps
 
+
 def print_gate_pebbling_constraints(gates, max_pebbles, net=None):
     s = GatePebbleSolver(gates, max_pebbles, net=net)
     limited_gates = [g for g in gates if s.counts_toward_limit[g.gid]]
@@ -1698,7 +2111,9 @@ def print_gate_pebbling_constraints(gates, max_pebbles, net=None):
     print(f"\n  Per-gate dependencies:")
     for g in gates:
         po_flag = " [MUST END PEBBLED]" if g.gid in s.po_gate_ids else ""
-        print(f"    Gate {g.gid}{po_flag}: depends on {sorted(g.depends_on)}")
+        dependents = sorted(s.dependents.get(g.gid, ()))
+        print(f"    Gate {g.gid}{po_flag}: depends on {sorted(g.depends_on)}; "
+              f"dependents: {dependents}")
 
 
 # ---------------------------------------------------------------------------
@@ -1981,17 +2396,14 @@ def select_gadget_rule(node, net, children):
         return 5
 
     kinds = _fanin_kinds(node)
-    is_po = node in pos_set
-    xor_po_fanout = _is_xor_output_po(node, children, pos_set)
-
-    # Rule 4 = genuine primary-output / PO-XOR path.
-    if is_po or xor_po_fanout:
+    multiple_fanouts = len(fanouts) > 1
+    if multiple_fanouts:
         return 4
 
-    # Rule 6 = AND node that has multiple fanouts: nested shared-ancilla
-    # cascade (table row 4/second diagram in the attached image).
-    if len(fanouts) > 1:
-        return 6
+    is_po = node in pos_set
+    xor_po_fanout = _is_xor_output_po(node, children, pos_set)
+    if is_po or xor_po_fanout:
+        return 4
 
     if kinds is not None:
         a_is_pi, b_is_pi = kinds
@@ -2018,8 +2430,6 @@ def generate_gate(node, net, children=None):
         children = net.build_children()
 
     rule = select_gadget_rule(node, net, children)
-    fanouts = children.get(node, [])
-
     a, b, f, anc = _gate_labels(node)
     ops = []
 
@@ -2041,7 +2451,7 @@ def generate_gate(node, net, children=None):
     elif rule == 2:
         ops = [
             QOp("CNOT", targets=[anc], controls=[a]),
-            QOp("TOFFOLI", targets=[b], controls=[a, anc]),
+            QOp("TOFFOLI", targets=[b], controls=[a, "|0>"]),
             QOp("H", targets=[f]),
             QOp("T", targets=[anc]),
             QOp("CNOT", targets=[f], controls=[anc]),
@@ -2072,21 +2482,7 @@ def generate_gate(node, net, children=None):
         description = "A and B are primary inputs (standard Toffoli->Clifford+T)"
     elif rule == 4:
         ops = [
-            QOp("H", targets=[f]),
-            QOp("CNOT", targets=[f], controls=[b]),
-            QOp("Tdg", targets=[f]),
-            QOp("CNOT", targets=[f], controls=[a]),
-            QOp("T", targets=[f]),
-            QOp("CNOT", targets=[f], controls=[b]),
-            QOp("Tdg", targets=[f]),
-            QOp("CNOT", targets=[f], controls=[a]),
-            QOp("T", targets=[b]),
-            QOp("T", targets=[f]),
-            QOp("H", targets=[f]),
-            QOp("CNOT", targets=[b], controls=[a]),
-            QOp("T", targets=[a]),
-            QOp("Tdg", targets=[b]),
-            QOp("CNOT", targets=[b], controls=[a]),
+            QOp("TOFFOLI", targets=[f], controls=[a, b]),
             QOp("CNOT", targets=[anc], controls=[a]),
             QOp("CNOT", targets=[f], controls=[anc]),
         ]
@@ -2097,34 +2493,6 @@ def generate_gate(node, net, children=None):
             QOp("CNOT", targets=[f], controls=[a]),
         ]
         description = "XOR node: CNOT cascade"
-    elif rule == 6:
-        # Shared-ancilla nested cascade for a node that has many fanouts.
-        # This follows the table's "A is an AND node that has multiple
-        # fanouts" pattern: one shared ancilla structure, then nested
-        # consumer-specific cascades.
-        ops = [
-            QOp("CNOT", targets=[anc], controls=[a]),
-            QOp("T", targets=[anc]),
-        ]
-
-        for idx, ch in enumerate(fanouts):
-            branch_f = f"{f}_{idx}"
-            ops.extend([
-                QOp("H", targets=[branch_f]),
-                QOp("CNOT", targets=[branch_f], controls=[anc]),
-                QOp("Tdg", targets=[branch_f]),
-                QOp("CNOT", targets=[branch_f], controls=[b]),
-                QOp("T", targets=[branch_f]),
-                QOp("CNOT", targets=[branch_f], controls=[anc]),
-                QOp("Tdg", targets=[branch_f]),
-                QOp("CNOT", targets=[branch_f], controls=[b]),
-                QOp("H", targets=[branch_f]),
-            ])
-
-        description = (
-            "AND node with multiple fanouts: shared ancilla reused across "
-            "nested branch cascade (per-row-4 / image-2 pattern)"
-        )
     else:
         raise ValueError(f"Unknown rule {rule} for node {node.name}")
 
@@ -2227,61 +2595,12 @@ def dump_qasm(qc, path=None):
 
 
 # ---------------------------------------------------------------------------
-# Debug/dump helpers
-# ---------------------------------------------------------------------------
-
-
-def _pebbling_steps_to_json(steps):
-    """Serializes a node-level (node, action) step list to plain dicts."""
-    return [{"node": n.name, "action": action} for n, action in steps]
-
-def _gate_groups_to_json(gates):
-    """Serializes GateGroup objects to plain dicts for JSON dumping."""
-    out = []
-    for g in gates:
-        out.append({
-            "gid": g.gid,
-            "nodes": [n.name for n in g.nodes],
-            "outputs": [n.name for n in g.outputs],
-            "internal": [n.name for n in g.internal],
-            "inputs": [n.name for n in g.inputs],
-            "depends_on": sorted(g.depends_on),
-        })
-    return out
-
-def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
-                              gate_steps=None, extra=None):
-    """
-    Writes a single JSON file containing the node-level pebbling
-    sequence and/or gate groups and/or gate-level schedule, for
-    external inspection. Purely a debug/dev toggle -- does not affect
-    solving behavior.
-    """
-    import json
-    payload = {}
-    if node_steps is not None:
-        payload["node_pebbling_sequence"] = _pebbling_steps_to_json(node_steps)
-    if gate_groups is not None:
-        payload["gate_groups"] = _gate_groups_to_json(gate_groups)
-    if gate_steps is not None:
-        payload["gate_level_schedule"] = [
-            {"step": k, "gate_id": gid, "op": op, "tag": tag}
-            for (k, gid, op, tag) in gate_steps
-        ]
-    if extra:
-        payload.update(extra)
-
-    with open(path, "w") as f:
-        json.dump(payload, f, indent=2)
-
-    print(f"\nDumped pebbling debug info to {path}")
-
-
-# ---------------------------------------------------------------------------
 # Demo
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+
     def _parse_max_steps(value):
         v = value.strip().lower()
         if v == "auto":
@@ -2305,11 +2624,13 @@ if __name__ == "__main__":
                               "for its Phase 1 greedy pebble-budget fill. See "
                               "pebbling_solver.py module docstring, "
                               "'TOPOLOGICAL ORDER CHOICE'.")
-    parser.add_argument("--dump-json", type=str, default=None,
-                         help="If set, writes the solved gate-level schedule, "
-                              "gate groups, and expanded node-level pebbling "
-                              "sequence to this path as JSON, in addition to "
-                              "normal stdout output. Purely a debug toggle.")
+    parser.add_argument("--no-merge-siblings", action="store_true",
+                         help="Disable sibling fanout group merging (Phase "
+                              "2.5 of build_gate_groups). See module "
+                              "docstring, 'SIBLING FANOUT MERGING'.")
+    parser.add_argument("--merge-pebble-slack", type=float, default=1.5,
+                         help="Slack multiplier on max_pebbles allowed when "
+                              "considering a sibling fanout merge. Default 1.5.")
     args = parser.parse_args()
 
     pebble_limit = args.max_pebbles
@@ -2363,7 +2684,13 @@ if __name__ == "__main__":
     _try_build_and_dump_qiskit(net, gadgets, "example_circuit.qasm")
 
     gate_limit = max(pebble_limit, len(net.pos))
-    gates = build_gate_groups(net, max_pebbles=gate_limit, topo_order=args.topo_order)
+    gates = build_gate_groups(
+        net,
+        max_pebbles=gate_limit,
+        topo_order=args.topo_order,
+        merge_sibling_fanouts=not args.no_merge_siblings,
+        merge_pebble_slack=args.merge_pebble_slack,
+    )
     print_gate_node_groups(gates)
     display_gate_groups(gates)
 
@@ -2371,10 +2698,7 @@ if __name__ == "__main__":
     cycle = find_gate_dependency_cycle(gates)
     print(f"\nGate dependency cycle check: {'CYCLE ' + str(cycle) if cycle else 'none (acyclic, as guaranteed)'}")
 
-    gate_steps = pebble_gates(
-        gates, max_pebbles=gate_limit, max_steps=None, net=net,
-        dump_json=args.dump_json,
-    )
+    gate_steps = pebble_gates(gates, max_pebbles=gate_limit, max_steps=None, net=net)
 
     print("\n" + "=" * 60)
     print("Reconstruction check")
