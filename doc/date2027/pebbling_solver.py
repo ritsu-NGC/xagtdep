@@ -152,7 +152,7 @@ ancilla feeding a small, localized cluster of consumers. Like
 `inputs` stay consistent with the new ownership.
 
 ======================================================================
-MIXED PO GROUPS (the bug this revision fixes)
+MIXED PO GROUPS
 ======================================================================
 
 `GatePebbleSolver` requires any gate that owns at least one TRUE
@@ -161,33 +161,42 @@ final state must be True). Consequently, that gate NEVER executes an
 `uncompute_gate` event.
 
 If a single group's `outputs` list contains BOTH a genuine PO node AND
-some other, non-PO output node (e.g. a node shared/reused by two
-different downstream outputs under Reed-Muller cut sharing, such that
-it is consumed by a node in a DIFFERENT, later group), then that
-non-PO output's qubit is allocated when the group computes but can
-NEVER be freed -- since the only place non-PO outputs are freed is the
-group's `uncompute_gate` event, and a PO-owning group never uncomputes.
-This caused `assign_qubits_to_pebbling`'s final liveness assertion to
-fail with a leftover live qubit (e.g. a shared AND-monomial node like
-"and1_0_1") even after the qubit-reclamation-timing fix in a prior
-revision.
+some other, non-PO output node, then that non-PO output's qubit is
+allocated when the group computes but can NEVER be freed -- since the
+only place non-PO outputs are freed is the group's `uncompute_gate`
+event, and a PO-owning group never uncomputes.
 
-The fix (`_split_mixed_po_groups`, run as the phase after sibling-
-fanout merging in `build_gate_groups`) detects any group whose
-`outputs` mix a genuine PO with a non-PO output, and splits that
-group's node list at the position immediately after the LAST such
-non-PO output node: nodes up to and including that point become one
-group (with no PO among its outputs, so it is now free to uncompute
-normally), and the remainder (containing the PO) becomes a second
-group. Because groups are always contiguous ranges of the topological
-order, splitting one range into two contiguous sub-ranges preserves
-the convexity/acyclicity guarantee established in Phase 1 -- no
-additional cycle-checking logic is required beyond the same defensive
-validation already run at the end. This is applied repeatedly (a
-fixed-point loop) since a single split could, in principle, still
-leave a "mixed" situation if a group contained more than one PO
-interspersed with non-PO outputs; the loop terminates because the
-total node count is fixed and the group count only ever increases.
+`_split_mixed_po_groups`, run as the phase after sibling-fanout
+merging in `build_gate_groups`, detects any group whose `outputs` mix
+a genuine PO with a non-PO output, and splits that group at the FIRST
+point in topological order where the output type changes (PO ->
+non-PO or non-PO -> PO). This is applied repeatedly (a fixed-point
+loop) since a single split could, in principle, still leave a "mixed"
+situation if a group contained multiple type transitions among its
+outputs; the loop terminates because the total node count is fixed and
+the group count only ever increases.
+
+IMPORTANT BUG FIX: an earlier version of this function instead cut a
+mixed group immediately after its LAST non-PO output, implicitly
+assuming every non-PO output precedes every PO output in topological
+order within the group. This assumption is FALSE in general -- on
+dense, deeply interleaved arithmetic circuits (e.g. EPFL's `hyp.blif`,
+a 128-bit integer hypotenuse/sqrt circuit), a group can have a non-PO
+output that occurs, in topological order, AFTER its last PO output. In
+that case the old "cut after last non-PO index" logic computed a cut
+point equal to the group's own final node index, producing an EMPTY
+second_part; the `if first_part and second_part` guard then silently
+skipped the split entirely (treating it as a no-op), `changed` was
+never set, the fixed-point loop believed it had converged, and
+`_validate_no_mixed_po_groups` then correctly raised `AssertionError`
+at the end of `build_gate_groups`. The fix instead finds the FIRST
+index (in topological order) at which consecutive outputs switch
+between PO and non-PO, and cuts there. This guarantees the SECOND part
+is always non-empty (there is, by definition of "mixed", at least one
+more output of the opposite type strictly after the transition point),
+so the split always makes genuine progress on every iteration,
+regardless of how PO and non-PO outputs happen to be interleaved in
+topological order.
 
 ======================================================================
 QUBIT RECLAMATION POLICY (`_replay_gate_pebbling`)
@@ -210,7 +219,7 @@ reachable in practice.
 Separately, a group's `internal` (dirty pebble) nodes are, by
 definition, values that are NEVER read by anything outside their own
 owning gate -- they exist purely as local ancilla for that gate's own
-compute step. They must therefore be freed EAGERLY, immediately after
+computation. They must therefore be freed EAGERLY, immediately after
 their owning gate's compute step finishes, rather than deferred to
 that gate's uncompute_gate event, for the same reason: a PO-owning
 gate never uncomputes.
@@ -224,32 +233,23 @@ COMPOUND XOR CLUSTER DETECTION (`read_blif`)
 ({"01 1", "10 1"}) or XNOR pattern ({"00 1", "11 1"}). Many real BLIF
 benchmarks (e.g. EPFL's `adder.blif`) instead decompose an XOR into
 THREE separate `.names` nodes: two single-minterm "product" nodes over
-the SAME two signals (e.g. `p1 = a & ~b`, `p2 = ~a & b`), combined by a
-third node via a NOR/OR/XNOR-style multi-row cover (e.g.
-`out = NOR(p1, p2)`, cover row "00 0"). Each of these 3 nodes, in
-isolation, fails `_is_xor_cover` (the two product nodes have only 1
-row, not 2; the combiner's cover isn't the exact 2-row XOR/XNOR
-pattern), so all 3 were previously charged as full AND-cost pebbles
-by `_pebble_cost`, and routed to AND-type synthesis rules by
+the SAME two signals, combined by a third node via a NOR/OR/XNOR-style
+multi-row cover. Each of these 3 nodes, in isolation, fails
+`_is_xor_cover`, so all 3 were previously charged as full AND-cost
+pebbles by `_pebble_cost`, and routed to AND-type synthesis rules by
 `select_gadget_rule` -- even though the whole 3-node cluster is
 functionally just one ancilla-free XOR gate.
 
 `_try_mark_compound_xor_cluster`, called from `read_blif` right after
-each node is created, detects this specific 3-node shape (two
-complementary single-minterm products over the same 2 signals, feeding
-a NOR/XNOR-style combiner) and retroactively marks all 3 nodes'
-`is_xor = True`. This flows through automatically to:
-  - `_pebble_cost` -- all 3 nodes now cost 0, not 3, in Phase 1's
-    pebble-budget accounting.
-  - `select_gadget_rule` -- all 3 nodes now route to rule 5 (ancilla-
-    free CNOT cascade) instead of AND-type rules 1-4.
+each node is created, detects this specific 3-node shape and
+retroactively marks all 3 nodes' `is_xor = True`. This flows through
+automatically to `_pebble_cost` (all 3 nodes now cost 0) and
+`select_gadget_rule` (all 3 nodes now route to rule 5, ancilla-free
+CNOT cascade).
 
 This detector is intentionally NARROW: it only fires on the exact
 "two complementary single-minterm products over the same 2 signals,
-combined by a 2-row-negated-style combiner" shape. It does NOT attempt
-to reclassify other multi-row AND/OR/NOR carry-logic clusters (e.g.
-EPFL adder.blif's carry-propagate gates), to avoid misclassifying
-genuine AND/OR logic as XOR.
+combined by a 2-row-negated-style combiner" shape.
 
 ======================================================================
 MIN-STEP DIAGNOSTIC SEARCH (`find_min_gate_steps`)
@@ -268,13 +268,9 @@ actually forces.
 `find_min_gate_steps` (and its helper `_solve_gate_steps_at_fixed_
 steps`) instead fixes `max_pebbles` and searches DOWNWARD from a
 known-SAT step count until UNSAT is hit, to find the TRUE minimum step
-count at that budget. Comparing that minimum against whatever
-`pebble_gates` originally found tells you whether a given toggle in
-the original schedule was load-bearing (still present at the true
-minimum) or just solver noise (absent once forced to the minimum).
-This is a diagnostic/debug tool, not part of the main solving hot path
--- it performs a linear (not binary) downward search, rebuilding a
-fresh solver at each step count.
+count at that budget. This is a diagnostic/debug tool, not part of the
+main solving hot path -- it performs a linear (not binary) downward
+search, rebuilding a fresh solver at each step count.
 
 ======================================================================
 PO-GATE MONOTONICITY (`GatePebbleSolver.add_step`)
@@ -283,34 +279,24 @@ PO-GATE MONOTONICITY (`GatePebbleSolver.add_step`)
 `GatePebbleSolver` only checks, via `solve()`, that PO-owning gates are
 pebbled at the MOST RECENT step examined -- it does not, on its own,
 prevent a PO-owning gate from being uncomputed and recomputed at
-EARLIER steps, since nothing besides that final check ever examines a
-PO gate's intermediate state. Combined with the encoding having no
-cost/objective function distinguishing a "clean" schedule from one
-containing gratuitous toggles, Z3 is free to include repeated
-compute/uncompute cycles for a PO-owning gate even when they serve no
-purpose whatsoever -- purely because doing so isn't explicitly
-forbidden and doesn't affect satisfiability.
-
-`add_step` adds one explicit constraint per gate in `po_gate_ids`:
-`Implies(s_cur, s_nxt)` -- i.e. once a PO-owning gate is pebbled, it
-must REMAIN pebbled in every subsequent step.
-
-Empirically confirmed (via `find_min_gate_steps`) to cost NOTHING in
-achievable step count for `adder16.blif`.
+EARLIER steps. `add_step` adds one explicit constraint per gate in
+`po_gate_ids`: `Implies(s_cur, s_nxt)` -- i.e. once a PO-owning gate is
+pebbled, it must REMAIN pebbled in every subsequent step. Empirically
+confirmed (via `find_min_gate_steps`) to cost NOTHING in achievable
+step count for `adder16.blif`.
 
 ======================================================================
-JUSTIFIED-RECOMPUTE CONSTRAINT (the gate-1 bug this revision fixes)
+JUSTIFIED-RECOMPUTE CONSTRAINT
 ======================================================================
 
 PO-gate monotonicity alone does NOT stop a NON-PO gate from being
 recomputed and re-uncomputed arbitrarily many times even after every
 gate that ever depended on it has permanently finished needing it.
-This was observed concretely in an `adder16.blif` schedule: gate 1's
-`outputs` are consumed ONLY by gates 2 and 3 (per `depends_on`), both
-of which compute once, at step 2, and never again -- yet gate 1 itself
-toggled on nearly every one of the subsequent 29 steps, in lockstep
-with the currently-active carry gate, purely because the shared
-`PbLe` pebble-budget constraint left room for Z3 to do so and nothing
+This was observed concretely in an `adder16.blif` schedule: a gate
+whose `outputs` are consumed only by two dependents, both of which
+compute once, early, and never again, nonetheless toggled on nearly
+every one of the remaining steps, purely because the shared `PbLe`
+pebble-budget constraint left room for Z3 to do so and nothing
 forbade it.
 
 The general principle missed by PO-monotonicity alone: a gate should
@@ -319,45 +305,106 @@ been used and uncomputed at least once before) unless doing so is
 actually justified by some real DEPENDENT of that gate itself
 transitioning to True (i.e. becoming newly pebbled) at that same step.
 If none of a gate's dependents are becoming newly pebbled at a given
-step, there is no reason for that gate to come back to life -- nothing
-would consume it.
+step, there is no reason for that gate to come back to life.
 
 Implementation (`GatePebbleSolver`):
-  - `self.dependents[gid]`: the REVERSE of `depends_on` -- the set of
-    gate ids that list `gid` in THEIR OWN `depends_on`. Precomputed
-    once in `__init__` from the full `gates` list.
-  - `ever_computed` state: one extra monotonic boolean per gate,
-    threaded through `add_step` alongside `s`/`a` (state/action). Once
-    True, stays True forever (`ever_next = Or(ever_cur, s_nxt)`). This
-    distinguishes a gate's FIRST-EVER compute (always allowed
-    unconditionally) from a RECOMPUTE (only allowed when justified).
-  - The new constraint, added once per non-PO gate per step:
+  - `self.dependents[gid]`: the REVERSE of `depends_on`.
+  - `ever_computed` state: one extra monotonic boolean per gate.
+  - A recompute is only permitted if justified by some dependent
+    itself newly pebbling at the same step; if a gate has no
+    dependents at all, recompute is forbidden outright.
 
-        justified = Or([
-            And(Not(dep_s_cur), dep_s_next)   # dependent newly pebbles
-            for dep_gid in self.dependents[gid]
-        ])   # False (vacuously) if the gate has NO dependents at all
-        self.slv.add(Implies(
-            And(ever_cur, Not(s_cur), s_nxt),   # a RECOMPUTE is happening
-            justified
-        ))
+PO-owning gates are exempt from this (they already have full
+monotonicity -- they never uncompute in the first place, so a
+"recompute" can never occur for them).
 
-    PO-owning gates are exempt from this (they already have full
-    monotonicity -- they never uncompute in the first place, so a
-    "recompute" can never occur for them).
+======================================================================
+ESCALATION ROUND LIMIT AND PER-ROUND RUNTIME MARKERS (`pebble_gates`)
+======================================================================
 
-This directly forbids exactly the gate-1 pattern observed: since gates
-2 and 3 (gate 1's only dependents) never transition to True again
-after step 2, `justified` is False for gate 1 at every step after its
-first use, so any attempted recompute of gate 1 past that point is now
-UNSAT-forcing rather than merely "unnecessary but allowed."
+`pebble_gates`'s escalation loop previously had only ONE stopping
+condition besides success: `max_pebbles_cap`, which bounds how HIGH
+the pebble budget is allowed to climb. This does not bound how much
+WORK is done before giving up, because a SINGLE round at a given
+pebble budget can itself run for a very long time -- the incremental
+step-search inside one round climbs `num_steps` from 0 up to
+`step_cap` one Z3 `add_step()` call at a time before that round gives
+up and escalates. On a large, densely interleaved circuit (e.g. EPFL's
+`hyp.blif`), a single round was observed to run for 2000+ incremental
+steps before giving up.
 
-For gates with genuinely NO dependents at all (like the old gate-0
-case, before it became a PO-owning gate under `_split_mixed_po_groups`
--- or any gate whose entire output set turns out to be dead code),
-`justified` is vacuously False, so such a gate may be computed once
-and uncomputed once, but never recomputed again. This subsumes and
-generalizes what PO monotonicity handles only for the PO-owning case.
+Two independent additions address this:
+
+  1. `max_escalations` (optional): caps the number of ESCALATION
+     ROUNDS attempted, independent of `max_pebbles_cap`. If the limit
+     is reached without finding a SAT schedule, `pebble_gates` raises
+     a `RuntimeError`. If omitted (None, the default), no round limit
+     is imposed.
+
+  2. Per-round runtime markers: every escalation round's wall-clock
+     duration, final step count reached, and SAT/UNSAT-exhausted
+     outcome are recorded into an `escalation_log` (a list of dicts,
+     one per round attempted) and printed to the console as each round
+     completes. This log is also written into the debug JSON payload
+     (under the key "escalation_log") via `dump_pebbling_debug_json`'s
+     `extra` parameter whenever `dump_json` is provided -- including
+     on failure paths (max_escalations reached, max_pebbles_cap
+     reached, etc.), not just on success.
+
+======================================================================
+TOGGLE-COUNT BUDGET SEARCH (`pebble_gates_by_toggle_budget`)
+======================================================================
+
+`pebble_gates`'s step-count escalation is fundamentally expensive on
+large, gate-dense circuits because EVERY escalation round rebuilds a
+fresh `GatePebbleSolver` from scratch, and WITHIN a round, every
+`add_step()` call re-issues a brand-new `PbLe` cardinality constraint
+over all AND-type gates for that step alone. Since steps are never
+discarded, the total problem size at step k is O(k * gates) -- by the
+time a round gives up at (e.g.) 2212 steps, Z3 is carrying thousands
+of independent copies of a cardinality constraint each ranging over
+thousands of gate variables, which is the dominant cost driver on
+circuits like EPFL's `hyp.blif`.
+
+`pebble_gates_by_toggle_budget` restructures the search entirely:
+
+  1. The full per-step structure (move clauses, PO monotonicity,
+     justified-recompute, `ever_computed` tracking) is built via
+     `GatePebbleSolver.build_all_steps(num_steps)` EXACTLY ONCE, using
+     a single fixed, generous `num_steps` upper bound on the number of
+     discrete time slots available (NOT a hard requirement that every
+     slot be used -- multiple gates may toggle within the same slot,
+     or none at all).
+
+  2. Instead of escalating the NUMBER OF STEPS, search escalates a
+     GLOBAL BUDGET on the TOTAL NUMBER OF COMPUTE/UNCOMPUTE (toggle)
+     EVENTS allowed across the ENTIRE schedule -- summed over every
+     gate and every step already built -- via
+     `GatePebbleSolver.solve_with_toggle_budget(toggle_budget)`. This
+     adds exactly ONE new `PbLe` constraint per round (over the
+     already-built per-step activity variables `a_{gid,i}`), wrapped
+     in a single `push()`/`pop()` pair, instead of rebuilding anything.
+
+  3. This reframes the search axis from "how many time steps are
+     needed" (a proxy that forces rebuilding expensive per-step
+     structure to explore) to "how much total compute/uncompute work
+     is needed" (a DIRECT cost measure that can be explored cheaply
+     via incremental push/pop on an otherwise-static solver). Z3 can
+     also reuse learned clauses across pushes within the same
+     incremental context, which the old per-round full-rebuild
+     approach could never benefit from.
+
+CAVEAT: `num_steps` is still a fixed upper bound chosen up front. If
+it is too small, NO toggle budget will ever be satisfiable (there
+simply aren't enough time slots available for the required
+dependency-respecting schedule to fit), and the search will exhaust
+`max_toggle_budget` without ever finding SAT -- in that case,
+`num_steps` itself needs to be increased, not the toggle budget. This
+function does not currently auto-escalate `num_steps`; see
+`find_min_gate_steps` for a separate utility that explores step-count
+minimality directly, and consider widening `num_steps` manually (e.g.
+based on the gate-dependency graph's longest path) if toggle-budget
+escalation alone cannot find a schedule.
 
 Everything else in this file (node-level Z3 pebbling, Reed-Muller/ESOP
 network generators, gate-level Z3 pebbling, gadget synthesis,
@@ -365,6 +412,7 @@ Qiskit/QASM export) is unchanged in spirit from prior revisions.
 """
 
 import random
+import time
 from collections import defaultdict
 
 from z3 import Bool, Solver, Implies, And, Or, Not, sat, unsat, PbLe
@@ -670,28 +718,9 @@ def _minterm_bits(fanin_order, rows, shared_order):
 def _try_mark_compound_xor_cluster(node, fanins, rows, node_cover_info):
     """
     Detects the 3-node XOR/XNOR decomposition pattern used by some BLIF
-    benchmarks (e.g. EPFL's `adder.blif` sum-bit logic):
-
-        p1 = .names a b p1   (single minterm, e.g. "10 1" -> a & ~b)
-        p2 = .names a b p2   (the COMPLEMENTARY minterm over the SAME
-                               a, b, e.g. "01 1" -> ~a & b)
-        out = .names p1 p2 out   ("00 0" -> NOR(p1,p2) == XOR(a,b),
-                                   or "11 1"/"00 1"/"11 0" for the
-                                   XNOR-polarity variants)
-
-    If `node` (the combiner, `out` above) matches this shape, marks
-    `node` AND its two direct product fanins (`p1`, `p2`) as
-    `is_xor = True`, so `_pebble_cost` correctly treats the WHOLE
-    3-node cluster as a single ancilla-free XOR (matching its actual
-    synthesis cost -- see `select_gadget_rule`'s rule 5), instead of
-    charging 3 separate AND-cost pebbles for what is functionally just
-    one XOR gate.
-
-    `node_cover_info`: dict of Node -> (fanin_nodes, cover_rows),
-    populated during BLIF parsing for every node seen so far (nodes
-    always appear here before any node that consumes them, since BLIF
-    -- and this reader -- processes `.names` blocks in topological
-    order).
+    benchmarks (e.g. EPFL's `adder.blif`) and marks all 3 nodes'
+    `is_xor = True` if the shape matches. See module docstring
+    ("COMPOUND XOR CLUSTER DETECTION").
 
     Returns True if a cluster was detected and marked, else False.
     """
@@ -1175,19 +1204,9 @@ def _merge_sibling_fanout_groups(net: PebblingNetwork, groups, pos_set,
           groups in that contiguous run into one.
         - The merge is only accepted if the merged group's Phase-1
           pebble cost (sum of `_pebble_cost` over its nodes) does not
-          exceed `max_pebbles * merge_pebble_slack`. This slack factor
-          allows a BOUNDED increase in peak pebble usage in exchange
-          for fewer total gate-group toggles (see module docstring,
-          "SIBLING FANOUT MERGING" -- this is the same space/time
-          tradeoff direction as the rest of the solver, just applied
-          at grouping time instead of schedule time).
-      Only ADJACENT groups are ever merged, preserving convexity: a
-      contiguous run of already-convex (contiguous-range) groups is
-      itself still a contiguous range, so merging never violates the
-      convexity guarantee established in Phase 1.
+          exceed `max_pebbles * merge_pebble_slack`.
 
-    This is a single greedy pass, not run to a fixed point -- see
-    module docstring for why this is sufficient in practice.
+    This is a single greedy pass, not run to a fixed point.
 
     Returns a new list of `GateGroup` objects (freshly renumbered) with
     boundaries recomputed via `_compute_boundaries`.
@@ -1281,20 +1300,14 @@ def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
     owning group also owns a PO and therefore never uncomputes). See
     module docstring ("MIXED PO GROUPS") for the full rationale.
 
-    Splitting is done by cutting a group's owned-node list immediately
-    after the LAST non-PO output node in that group; everything up to
-    and including that point becomes an earlier group (guaranteed to
-    have no PO among its outputs, since the split point was chosen as
-    the last non-PO output -- any PO in the original group must appear
-    strictly after all non-PO outputs... this is not assumed, it's
-    re-verified by recomputing boundaries and re-checking each
-    iteration), and the remainder becomes a later group. Because every
-    group is always a CONTIGUOUS RANGE of the overall topological
-    order, splitting one range into two contiguous sub-ranges preserves
-    convexity everywhere (a sub-range of a convex range is convex).
+    Splitting is done by finding the FIRST point in topological order
+    at which the output TYPE changes (PO -> non-PO or non-PO -> PO)
+    among the group's own outputs, and cutting the group's owned-node
+    list immediately after that point. This guarantees the second part
+    is always non-empty.
 
     Runs to a fixed point: since each split strictly increases the
-    number of groups while the total node count stays fixed, this loop
+    number of groups while the total node count is fixed, this loop
     is guaranteed to terminate.
     """
     children = net.build_children()
@@ -1309,14 +1322,28 @@ def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
             non_po_outputs = [n for n in g.outputs if n not in pos_set]
 
             if po_outputs and non_po_outputs:
-                last_idx = max(g.nodes.index(n) for n in non_po_outputs)
-                first_part = g.nodes[:last_idx + 1]
-                second_part = g.nodes[last_idx + 1:]
-                if first_part and second_part:
-                    node_lists.append(first_part)
-                    node_lists.append(second_part)
-                    changed = True
-                    continue
+                sorted_outputs = sorted(g.outputs, key=lambda n: g.nodes.index(n))
+
+                cut_idx = None
+                prev_is_po = sorted_outputs[0] in pos_set
+                prev_node_idx = g.nodes.index(sorted_outputs[0])
+                for n in sorted_outputs[1:]:
+                    is_po = n in pos_set
+                    node_idx = g.nodes.index(n)
+                    if is_po != prev_is_po:
+                        cut_idx = prev_node_idx
+                        break
+                    prev_is_po = is_po
+                    prev_node_idx = node_idx
+
+                if cut_idx is not None:
+                    first_part = g.nodes[:cut_idx + 1]
+                    second_part = g.nodes[cut_idx + 1:]
+                    if first_part and second_part:
+                        node_lists.append(first_part)
+                        node_lists.append(second_part)
+                        changed = True
+                        continue
 
             node_lists.append(g.nodes)
 
@@ -1357,15 +1384,6 @@ def _dependency_chain_topo_order(net: PebblingNetwork):
     contiguous ranges. This function only changes WHICH nodes end up
     adjacent, and therefore which nodes Phase 1's greedy pebble-budget
     fill groups together.
-
-    Heuristic ("list scheduling with successor preference", also used
-    in compiler instruction scheduling to minimize live-range overlap):
-    after placing node `u`, if `u` has a direct consumer `w` whose
-    OTHER fanins are already placed (i.e. `w` just became "ready"
-    because of `u`), place `w` next. This chains genuinely DEPENDENT
-    nodes together, so a producer is much more likely to land in the
-    same contiguous group as its consumer, instead of an unrelated
-    sibling that merely happens to sit nearby in creation order.
 
     Falls back to the earliest-ready node by creation order (stable,
     deterministic) whenever no direct consumer of the just-placed node
@@ -1434,64 +1452,12 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
     Gate-group construction algorithm. See module docstring for the
     full rationale. Steps:
 
-      1. Partition: walk the network's nodes (in the topological order
-         selected by `topo_order` -- see module docstring, "TOPOLOGICAL
-         ORDER CHOICE") in order, skipping PIs, and assign each non-PI
-         node to the CURRENT group. Close the current group (start a
-         fresh one) when:
-           (a) the node is a primary output, or
-           (b) the accumulated Phase-1 pebble cost of nodes placed into
-               the current group reaches `max_pebbles - 1`.
-         That per-node cost currently comes from `_pebble_cost(node)`,
-         which returns 0 for XOR nodes and 1 for every other non-PI
-         node. Future cost-aware grouping should continue to route all
-         such accounting through `_pebble_cost` so XOR nodes remain
-         hard-excluded from the budget.
-
-      2. Boundary computation: for every group, inspect each owned
-         node's ORIGINAL fanins/fanouts to classify it as `outputs`
-         (external consumer or PO) or `internal` (fully consumed
-         within the group), and collect `inputs` (external fanins
-         actually used).
-
-      2.5. Merge sibling fanout groups (`_merge_sibling_fanout_groups`,
-           only if `merge_sibling_fanouts=True`) -- consolidates
-           topologically adjacent groups that both consume the same
-           shared non-XOR node, per rule 6 of the gadget synthesis
-           table. See module docstring ("SIBLING FANOUT MERGING").
-
-      3. Split any group whose `outputs` mix a genuine PO with a
-         non-PO output (`_split_mixed_po_groups`) -- see module
-         docstring ("MIXED PO GROUPS"). Run AFTER sibling-fanout
-         merging so a merge can never accidentally reintroduce a mixed
-         PO/non-PO group without being caught by this pass.
-
-      4. Dependency derivation: for each (possibly merged/re-split)
-         group, look up the owner group of each of its `inputs`; that
-         owner's gid is added to `depends_on`.
-
-      5. Validation: confirm every non-PI node is owned by EXACTLY one
-         group (`_validate_gate_partition`), and that the resulting
-         gate-dependency graph is acyclic (`find_gate_dependency_cycle`)
-         -- which is guaranteed by construction (contiguous ranges of a
-         topological order are always convex, see accompanying .tex),
-         but is checked defensively here.
-
-    `topo_order`:
-      - "creation": use `net.nodes` as-is, i.e. the order
-        nodes were created in (today's original behavior, unchanged).
-      - "dependency_chain" (default): use `_dependency_chain_topo_order(net)`
-        instead, which reorders nodes (still a VALID topological
-        order -- convexity is preserved regardless) to keep
-        producer/consumer chains adjacent, so Phase 1's greedy
-        pebble-budget fill is more likely to group a node with its
-        actual dependents rather than an unrelated sibling. See module
-        docstring for details and a worked example.
-
-    `merge_sibling_fanouts` / `merge_pebble_slack`:
-      - See `_merge_sibling_fanout_groups` and module docstring
-        ("SIBLING FANOUT MERGING"). Set `merge_sibling_fanouts=False`
-        to fully restore prior behavior (no merging).
+      1. Partition (contiguous topological-range fill, budget-limited)
+      2. Boundary computation (outputs/internal/inputs)
+      2.5. Sibling fanout merging (adjacency + slack-bounded)
+      3. Mixed-PO group splitting (fixed point)
+      4. Dependency derivation from boundary inputs
+      5. Validation (partition uniqueness, acyclicity)
 
     Raises `ValueError` if `max_pebbles < len(net.pos)`, or if
     `topo_order` is not one of the recognized values.
@@ -1757,10 +1723,7 @@ class GatePebbleSolver:
     dependents (gates that list it in their own `depends_on`)
     transitioning to True (newly pebbling) at that same step. A gate
     with no dependents at all may be computed once and uncomputed once,
-    but never recomputed. This directly rules out the observed
-    `adder16.blif` bug where a gate with real but early-finishing
-    dependents kept toggling for the rest of the schedule with no
-    justification.
+    but never recomputed.
     """
 
     def __init__(self, gates, max_pebbles, net=None):
@@ -1869,6 +1832,18 @@ class GatePebbleSolver:
         self.ever = dict(ever_next)
         self.history.append(dict(self.current))
 
+    def build_all_steps(self, num_steps):
+        """
+        Convenience: calls add_step() exactly num_steps times up front,
+        building the FULL step structure (move clauses, PO monotonicity,
+        justified-recompute) ONCE. Used by the toggle-budget search
+        (`pebble_gates_by_toggle_budget`) instead of incrementally
+        growing steps per escalation round -- see module docstring,
+        "TOGGLE-COUNT BUDGET SEARCH".
+        """
+        for _ in range(num_steps):
+            self.add_step()
+
     def solve(self):
         self.slv.push()
         for g in self.gates:
@@ -1877,6 +1852,41 @@ class GatePebbleSolver:
                 self.slv.add(s_cur)
             else:
                 self.slv.add(s_cur == False)
+        r = self.slv.check()
+        if r == unsat:
+            self.slv.pop()
+        return r
+
+    def solve_with_toggle_budget(self, toggle_budget):
+        """
+        Checks satisfiability with an ADDITIONAL global constraint: the
+        TOTAL number of compute/uncompute events (activity variables
+        `a_{gid,i}` summed across every gate and every step already
+        built via `build_all_steps`) must not exceed `toggle_budget`.
+        This replaces the step-count-based search: the step structure
+        itself is already fixed, so this method only adds ONE new
+        cardinality constraint via push/pop, instead of rebuilding or
+        growing anything. Much cheaper per attempt than the old
+        per-round full solver rebuild. See module docstring,
+        "TOGGLE-COUNT BUDGET SEARCH".
+        """
+        self.slv.push()
+
+        all_activity = []
+        for k in range(1, self.num_steps + 1):
+            for g in self.gates:
+                _, a_k = self.history[k][g.gid]
+                all_activity.append(a_k)
+        if all_activity:
+            self.slv.add(PbLe([(a, 1) for a in all_activity], toggle_budget))
+
+        for g in self.gates:
+            s_cur, _ = self.current[g.gid]
+            if g.gid in self.po_gate_ids:
+                self.slv.add(s_cur)
+            else:
+                self.slv.add(s_cur == False)
+
         r = self.slv.check()
         if r == unsat:
             self.slv.pop()
@@ -1929,6 +1939,12 @@ def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
     sequence and/or gate groups and/or gate-level schedule, for
     external inspection. Purely a debug/dev toggle -- does not affect
     solving behavior.
+
+    `extra`: optional dict merged directly into the top-level JSON
+    payload. Used by `pebble_gates` / `pebble_gates_by_toggle_budget`
+    to attach `escalation_log` (see module docstring, "ESCALATION
+    ROUND LIMIT AND PER-ROUND RUNTIME MARKERS" /
+    "TOGGLE-COUNT BUDGET SEARCH").
     """
     import json
     payload = {}
@@ -1952,25 +1968,62 @@ def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
 
 def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
                   auto_increase_pebbles=True, max_pebbles_cap=None, net=None,
-                  dump_json=None):
+                  dump_json=None, max_escalations=None):
     """
     Solves for a valid gate-level pebbling schedule with an escalating
     max_pebbles search. See module docstring and `GatePebbleSolver` for
     the full solving semantics.
 
-    dump_json: optional path. If set, as soon as a solution is found,
-    writes the solved gate-level schedule and gate groups (and the
-    expanded node-level pebbling sequence) to this path as JSON via
-    `dump_pebbling_debug_json`, right before returning. Purely a
-    debug/dev toggle -- does not affect solving behavior or the
-    returned value.
+    max_escalations: optional hard cap on the number of ESCALATION
+    ROUNDS attempted (i.e. distinct `current_pebbles` values tried),
+    independent of `max_pebbles_cap`. See module docstring, "ESCALATION
+    ROUND LIMIT AND PER-ROUND RUNTIME MARKERS", for the full rationale.
+    If omitted (None), no round limit is imposed.
+
+    Every escalation round's wall-clock duration, final step count
+    reached, and outcome are printed to the console as the round
+    completes, and recorded into a returned/dumped `escalation_log`.
+
+    dump_json: optional path. If set, as soon as a solution is found
+    (or the search fails for any reason), writes the solved gate-level
+    schedule (if any), gate groups (if any), expanded node-level
+    pebbling sequence (if any), AND the full `escalation_log` to this
+    path as JSON via `dump_pebbling_debug_json`. Purely a debug/dev
+    toggle -- does not affect solving behavior or the returned value.
+
+    NOTE: for large, gate-dense circuits where a single round of this
+    step-count-based search can itself run for a very long time (e.g.
+    EPFL's `hyp.blif`), consider `pebble_gates_by_toggle_budget`
+    instead -- see module docstring, "TOGGLE-COUNT BUDGET SEARCH".
     """
     if max_pebbles_cap is None:
         max_pebbles_cap = max(1, len(gates))
     max_pebbles_cap = max(max_pebbles_cap, max_pebbles)
 
     current_pebbles = max_pebbles
+    escalations_tried = 0
+    escalation_log = []
+
     while current_pebbles <= max_pebbles_cap:
+        if max_escalations is not None and escalations_tried >= max_escalations:
+            if dump_json:
+                dump_pebbling_debug_json(
+                    dump_json,
+                    extra={"escalation_log": escalation_log, "outcome": "max_escalations_reached"},
+                )
+            raise RuntimeError(
+                f"No gate-level pebbling solution found after "
+                f"{escalations_tried} escalation round(s) (max_escalations="
+                f"{max_escalations} reached), starting from max_pebbles="
+                f"{max_pebbles} up to current_pebbles={current_pebbles - 1}. "
+                f"Pass a larger max_escalations, a larger max_pebbles "
+                f"starting point, or a smaller max_steps to fail faster "
+                f"per round."
+            )
+
+        round_index = escalations_tried + 1
+        round_start = time.time()
+
         step_cap = max_steps
         if step_cap == "auto":
             step_cap = max(4, len(gates) * 4)
@@ -1982,11 +2035,29 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
             s.add_step()
             r = s.solve()
 
+        round_elapsed = time.time() - round_start
+        escalations_tried += 1
+
+        round_record = {
+            "round": round_index,
+            "max_pebbles": current_pebbles,
+            "steps_reached": s.num_steps,
+            "step_cap": step_cap,
+            "result": "sat" if r == sat else "unsat_exhausted",
+            "elapsed_s": round_elapsed,
+        }
+        escalation_log.append(round_record)
+
+        print(f"[round {round_index}] max_pebbles={current_pebbles} -> "
+              f"{'SAT' if r == sat else 'UNSAT'} after {s.num_steps} step(s) "
+              f"({round_elapsed:.2f}s)")
+
         if r == sat:
             s.save_model()
             if current_pebbles != max_pebbles:
                 print(f"\nRequested max_pebbles={max_pebbles} was "
-                      f"infeasible; escalated to {current_pebbles}.")
+                      f"infeasible; escalated to {current_pebbles} "
+                      f"(after {escalations_tried} round(s)).")
             gate_steps = s.extract(verbose=verbose)
 
             if dump_json:
@@ -1996,23 +2067,172 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
                     node_steps=node_steps,
                     gate_groups=gates,
                     gate_steps=gate_steps,
+                    extra={"escalation_log": escalation_log, "outcome": "sat"},
                 )
 
             return gate_steps
 
         if not auto_increase_pebbles:
+            if dump_json:
+                dump_pebbling_debug_json(
+                    dump_json,
+                    extra={"escalation_log": escalation_log, "outcome": "auto_increase_disabled"},
+                )
             raise RuntimeError(
                 f"No gate-level pebbling solution found with max_pebbles="
                 f"{current_pebbles} within {step_cap} steps."
             )
 
         print(f"max_pebbles={current_pebbles} infeasible within "
-              f"{step_cap} steps; increasing to {current_pebbles + 1}...")
+              f"{step_cap} steps; increasing to {current_pebbles + 1}... "
+              f"(escalation round {escalations_tried}"
+              + (f"/{max_escalations}" if max_escalations is not None else "")
+              + ")")
         current_pebbles += 1
 
+    if dump_json:
+        dump_pebbling_debug_json(
+            dump_json,
+            extra={"escalation_log": escalation_log, "outcome": "max_pebbles_cap_reached"},
+        )
     raise RuntimeError(
         f"No gate-level pebbling solution found for any max_pebbles from "
         f"{max_pebbles} up to max_pebbles_cap={max_pebbles_cap}."
+    )
+
+
+def pebble_gates_by_toggle_budget(gates, max_pebbles, net, num_steps=None,
+                                   start_toggle_budget=None, max_toggle_budget=None,
+                                   toggle_budget_step=1, max_escalations=None,
+                                   verbose=True, dump_json=None):
+    """
+    Alternative to `pebble_gates`. See module docstring, "TOGGLE-COUNT
+    BUDGET SEARCH", for the full rationale.
+
+    Instead of escalating the NUMBER OF TIME STEPS (which forces
+    rebuilding/growing the incremental step structure, and re-issuing a
+    fresh per-step PbLe cardinality constraint, at every escalation
+    round), this fixes a single, generous `num_steps` ONCE (via
+    `GatePebbleSolver.build_all_steps`) and instead escalates a GLOBAL
+    BUDGET on the total number of compute/uncompute (toggle) events
+    allowed across the whole schedule (via
+    `GatePebbleSolver.solve_with_toggle_budget`).
+
+    `num_steps` (if omitted): defaults to `max(4, 2 * len(gates))`, a
+    generous fixed upper bound on how many discrete time slots are
+    available (multiple gates may still toggle within the same slot,
+    so this is not the same as a toggle-count bound).
+
+    `start_toggle_budget` (if omitted): defaults to `len(gates)` (every
+    gate must compute at least once).
+
+    `max_toggle_budget` (if omitted): defaults to `2 * len(gates) *
+    num_steps` purely as a generous ceiling; in practice the search
+    usually succeeds long before this.
+
+    `max_escalations`: caps the number of toggle-budget rounds
+    attempted, same semantics as in `pebble_gates`.
+
+    Prints the same per-round runtime marker style as `pebble_gates`
+    and records an `escalation_log` (per round: budget tried, result,
+    elapsed time), dumped to `dump_json` if provided.
+
+    CAVEAT: if `num_steps` is too small, NO toggle budget will ever be
+    satisfiable -- in that case, increase `num_steps` directly rather
+    than `max_toggle_budget`.
+    """
+    if num_steps is None:
+        num_steps = max(4, 2 * len(gates))
+    if start_toggle_budget is None:
+        start_toggle_budget = len(gates)
+    if max_toggle_budget is None:
+        max_toggle_budget = 2 * len(gates) * max(1, num_steps)
+
+    build_start = time.time()
+    s = GatePebbleSolver(gates, max_pebbles, net=net)
+    s.init()
+    s.build_all_steps(num_steps)
+    build_elapsed = time.time() - build_start
+    print(f"[toggle-budget setup] built {num_steps} step(s) once "
+          f"({build_elapsed:.2f}s)")
+
+    current_budget = start_toggle_budget
+    escalations_tried = 0
+    escalation_log = []
+
+    while current_budget <= max_toggle_budget:
+        if max_escalations is not None and escalations_tried >= max_escalations:
+            if dump_json:
+                dump_pebbling_debug_json(
+                    dump_json,
+                    extra={"escalation_log": escalation_log, "outcome": "max_escalations_reached"},
+                )
+            raise RuntimeError(
+                f"No gate-level pebbling solution found after "
+                f"{escalations_tried} toggle-budget round(s) "
+                f"(max_escalations={max_escalations} reached), starting "
+                f"from toggle_budget={start_toggle_budget} up to "
+                f"current_budget={current_budget - toggle_budget_step} "
+                f"(num_steps={num_steps} fixed). If no budget up to "
+                f"max_toggle_budget={max_toggle_budget} succeeds, "
+                f"num_steps itself may be too small -- consider "
+                f"increasing it directly."
+            )
+
+        round_index = escalations_tried + 1
+        round_start = time.time()
+
+        r = s.solve_with_toggle_budget(current_budget)
+
+        round_elapsed = time.time() - round_start
+        escalations_tried += 1
+
+        round_record = {
+            "round": round_index,
+            "toggle_budget": current_budget,
+            "num_steps": num_steps,
+            "result": "sat" if r == sat else "unsat",
+            "elapsed_s": round_elapsed,
+        }
+        escalation_log.append(round_record)
+
+        print(f"[round {round_index}] toggle_budget={current_budget} "
+              f"(num_steps={num_steps}) -> "
+              f"{'SAT' if r == sat else 'UNSAT'} ({round_elapsed:.2f}s)")
+
+        if r == sat:
+            s.save_model()
+            gate_steps = s.extract(verbose=verbose)
+
+            if dump_json:
+                node_steps = expand_gate_schedule(gates, gate_steps) if gates else None
+                dump_pebbling_debug_json(
+                    dump_json,
+                    node_steps=node_steps,
+                    gate_groups=gates,
+                    gate_steps=gate_steps,
+                    extra={"escalation_log": escalation_log, "outcome": "sat"},
+                )
+
+            return gate_steps
+
+        print(f"toggle_budget={current_budget} infeasible; increasing to "
+              f"{current_budget + toggle_budget_step}... "
+              f"(round {escalations_tried}"
+              + (f"/{max_escalations}" if max_escalations is not None else "")
+              + ")")
+        current_budget += toggle_budget_step
+
+    if dump_json:
+        dump_pebbling_debug_json(
+            dump_json,
+            extra={"escalation_log": escalation_log, "outcome": "max_toggle_budget_reached"},
+        )
+    raise RuntimeError(
+        f"No gate-level pebbling solution found for any toggle_budget from "
+        f"{start_toggle_budget} up to max_toggle_budget={max_toggle_budget} "
+        f"at num_steps={num_steps}. Consider increasing num_steps directly "
+        f"if you suspect the fixed step count itself is too small."
     )
 
 
@@ -2617,6 +2837,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Z3-based reversible pebbling solver demo.")
     parser.add_argument("--max-pebbles", type=int, default=5)
     parser.add_argument("--max-steps", type=_parse_max_steps, default="auto")
+    parser.add_argument("--max-escalations", type=int, default=None,
+                         help="Cap the number of pebble-budget escalation "
+                              "rounds attempted, independent of max_pebbles "
+                              "growth itself. See module docstring, "
+                              "'ESCALATION ROUND LIMIT AND PER-ROUND RUNTIME "
+                              "MARKERS'.")
+    parser.add_argument("--use-toggle-budget", action="store_true",
+                         help="Use pebble_gates_by_toggle_budget instead of "
+                              "pebble_gates -- escalates a global toggle-"
+                              "count budget over a FIXED step count, instead "
+                              "of escalating the step count itself. See "
+                              "module docstring, 'TOGGLE-COUNT BUDGET "
+                              "SEARCH'.")
+    parser.add_argument("--toggle-num-steps", type=int, default=None,
+                         help="Fixed number of time steps to build once, "
+                              "when --use-toggle-budget is passed. Defaults "
+                              "to max(4, 2*len(gates)).")
     parser.add_argument("--skip-qiskit", action="store_true")
     parser.add_argument("--topo-order", choices=["creation", "dependency_chain"],
                          default="creation",
@@ -2698,7 +2935,17 @@ if __name__ == "__main__":
     cycle = find_gate_dependency_cycle(gates)
     print(f"\nGate dependency cycle check: {'CYCLE ' + str(cycle) if cycle else 'none (acyclic, as guaranteed)'}")
 
-    gate_steps = pebble_gates(gates, max_pebbles=gate_limit, max_steps=None, net=net)
+    if args.use_toggle_budget:
+        gate_steps = pebble_gates_by_toggle_budget(
+            gates, max_pebbles=gate_limit, net=net,
+            num_steps=args.toggle_num_steps,
+            max_escalations=args.max_escalations,
+        )
+    else:
+        gate_steps = pebble_gates(
+            gates, max_pebbles=gate_limit, max_steps=None, net=net,
+            max_escalations=args.max_escalations,
+        )
 
     print("\n" + "=" * 60)
     print("Reconstruction check")

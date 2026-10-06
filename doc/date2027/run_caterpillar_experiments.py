@@ -43,10 +43,49 @@ Examples:
         --num-dags 3 \
         --caterpillar-bin build/blif_to_tcount
 
+    # Run ONLY caterpillar (skip our pipeline entirely) to time how
+    # long caterpillar alone takes on a large circuit, e.g. hyp.blif:
+    python run_caterpillar_experiments.py \
+        --epfl-benchmarks hyp \
+        --caterpillar-bin build/blif_to_tcount \
+        --caterpillar-only
+
+======================================================================
+CATERPILLAR-ONLY MODE (--caterpillar-only)
+======================================================================
+Pass --caterpillar-only to skip `run_our_pipeline` ENTIRELY for every
+DAG in the batch -- only `run_caterpillar` (the C++ blif_to_tcount
+shim) is invoked. This is useful for isolating how long CATERPILLAR
+ALONE takes on a given circuit (e.g. a large EPFL benchmark like
+hyp.blif), without our own gate-grouping/Z3-pebbling/gadget-synthesis
+pipeline's time mixed in -- our pipeline's SAT-based search can be the
+dominant cost on large circuits (see pebbling_solver.py's module
+docstring), so isolating caterpillar's own runtime is often the first
+useful data point before deciding how to spend further optimization
+effort.
+
+In this mode:
+  - `our_t_count`, `our_qubits`, `our_elapsed_s`, `our_error` are all
+    reported as `None`/skipped in every row (no BLIF-export-failure
+    paths for "ours" apply either, since `write_blif` is still used to
+    produce the BLIF for synthetic DAGs, but `run_our_pipeline` is
+    simply never called).
+  - The RESULTS table still prints a `ours-T`/`ours-q` column (showing
+    "SKIP" for each), so the table shape stays identical to the normal
+    run, keeping any downstream parsing/diffing of this script's
+    output simple.
+  - The SUMMARY section is skipped entirely (it requires BOTH T-counts
+    to be present per row), and a one-line note explaining why is
+    printed instead.
+  - `--caterpillar-bin` is still required in this mode (there is
+    nothing else to run); omitting it produces the same per-row
+    "No --caterpillar-bin provided; skipped." error as in normal mode.
+
 ======================================================================
 DIAGNOSTICS (--debug)
 ======================================================================
-Pass --debug to print, for every DAG in the batch:
+Pass --debug to print, for every DAG in the batch (ignored entirely in
+--caterpillar-only mode, since our pipeline never runs):
   - the gate-group partition: group id, node names, and each node's
     resolved gadget rule (1-6) and its per-node T/Tdg cost.
   - the gate-LEVEL schedule: how many times each group id was toggled
@@ -74,6 +113,7 @@ Every DAG run through `run_our_pipeline` also dumps its solved
 gate-level schedule, its gate groups, and its expanded node-level
 pebbling sequence to a JSON file, via `pebbling_solver.pebble_gates`'s
 `dump_json` parameter (see pebbling_solver.py, `dump_pebbling_debug_json`).
+Skipped entirely in --caterpillar-only mode.
 
 By default one file per DAG is written to `<out_dir>/<label>_pebbling_debug.json`
 (same directory as the generated/looked-up `.blif` file). Pass
@@ -88,7 +128,7 @@ diagram of the logic network's DAG (PIs, AND/XOR gates, POs, fanin
 edges), with each solved GateGroup drawn as a dashed colored bounding
 box around its member nodes -- see `tikz_network_export.py`. This is a
 VISUALIZATION-only export; it never affects solving, T-counts, or
-qubit allocation.
+qubit allocation. Skipped entirely in --caterpillar-only mode.
 
 By default one `.tex` file per DAG is written to
 `<out_dir>/<label>_network.tex` (same directory as --dump-json-dir /
@@ -147,6 +187,9 @@ questions:
     corrected caterpillar" without large circuits dominating the
     aggregate the way the sum-of-sums ratio above does.
 
+Both SUMMARY sections are skipped entirely in --caterpillar-only mode
+(see above).
+
 ======================================================================
 PEBBLE BUDGET (auto-sizing and hard cap)
 ======================================================================
@@ -162,7 +205,8 @@ raises a `RuntimeError` for that row instead of climbing towards
 `len(gates)` (which can be very large on e.g. the bigger EPFL
 benchmarks and cause multi-minute/hanging Z3 searches). Pass an
 explicit `--max-pebbles` to override this for circuits that need a
-larger budget.
+larger budget. None of this applies in --caterpillar-only mode, since
+our pipeline never runs.
 """
 
 import argparse
@@ -499,6 +543,22 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
     }
 
 
+def _skipped_ours_result():
+    """
+    Placeholder "ours" result used in --caterpillar-only mode, so
+    every row still has the same shape as a normal run (our_t_count,
+    our_qubits, our_elapsed_s, our_error all present, just inert).
+    """
+    return {
+        "ok": False,
+        "t_count": None,
+        "qubit_count": None,
+        "num_ops": None,
+        "elapsed_s": None,
+        "error": "skipped (--caterpillar-only passed)",
+    }
+
+
 # ---------------------------------------------------------------------------
 # DAG generation for the experiment batch
 # ---------------------------------------------------------------------------
@@ -620,7 +680,8 @@ def main():
              "as a HARD CAP on pebble_gates's internal auto-escalation "
              "(pebble_gates will raise instead of escalating past this "
              "value). Pass explicitly to allow a larger budget for "
-             "circuits that need it."
+             "circuits that need it. Ignored entirely in "
+             "--caterpillar-only mode."
     )
     parser.add_argument("--out-dir", default=None,
                          help="Directory to write .blif files into "
@@ -628,7 +689,19 @@ def main():
     parser.add_argument(
         "--caterpillar-bin", default=None,
         help="Path to the built test/blif_to_tcount shim. If omitted, "
-             "caterpillar comparisons are skipped."
+             "caterpillar comparisons are skipped (or, in "
+             "--caterpillar-only mode, the entire run does nothing "
+             "useful -- a per-row error will be reported instead)."
+    )
+    parser.add_argument(
+        "--caterpillar-only", action="store_true",
+        help="Skip OUR pipeline (build_gate_groups/pebble_gates/gadget "
+             "synthesis) entirely for every DAG in the batch -- only run "
+             "the caterpillar shim. Useful for isolating how long "
+             "caterpillar ALONE takes on a given circuit (e.g. a large "
+             "EPFL benchmark), without our own Z3-based pebbling "
+             "search's time mixed in. See module docstring, "
+             "'CATERPILLAR-ONLY MODE (--caterpillar-only)'."
     )
     parser.add_argument("--timeout", type=float, default=120.0,
                          help="Per-DAG timeout (seconds) for the "
@@ -641,7 +714,8 @@ def main():
         help="Print gate-group composition, gate-level toggle counts, and "
              "node-level compute/uncompute counts for OUR pipeline, per "
              "DAG. Use this to see exactly why ours-T is what it is -- "
-             "see module docstring, 'DIAGNOSTICS (--debug)'."
+             "see module docstring, 'DIAGNOSTICS (--debug)'. Ignored "
+             "entirely in --caterpillar-only mode."
     )
     parser.add_argument(
         "--dump-json-dir", default=None,
@@ -649,7 +723,7 @@ def main():
              "(one file per DAG: <label>_pebbling_debug.json). Defaults "
              "to the same directory as the generated/looked-up .blif "
              "files (--out-dir). Ignored if --no-dump-pebbling-json is "
-             "passed."
+             "passed, or in --caterpillar-only mode."
     )
     parser.add_argument(
         "--no-dump-pebbling-json", action="store_true",
@@ -663,9 +737,9 @@ def main():
         help="Directory to write per-DAG TikZ network diagrams into "
              "(one file per DAG: <label>_network.tex). Defaults to the "
              "same directory as the generated/looked-up .blif files "
-             "(--out-dir). Ignored if --no-dump-tikz is passed. See "
-             "module docstring, 'TIKZ NETWORK DIAGRAM DUMP (on by "
-             "default)'."
+             "(--out-dir). Ignored if --no-dump-tikz is passed, or in "
+             "--caterpillar-only mode. See module docstring, 'TIKZ "
+             "NETWORK DIAGRAM DUMP (on by default)'."
     )
     parser.add_argument(
         "--no-dump-tikz", action="store_true",
@@ -690,12 +764,12 @@ def main():
     else:
         os.makedirs(out_dir, exist_ok=True)
 
-    dump_json_enabled = not args.no_dump_pebbling_json
+    dump_json_enabled = (not args.no_dump_pebbling_json) and (not args.caterpillar_only)
     dump_json_dir = args.dump_json_dir or out_dir
     if dump_json_enabled:
         os.makedirs(dump_json_dir, exist_ok=True)
 
-    dump_tikz_enabled = not args.no_dump_tikz
+    dump_tikz_enabled = (not args.no_dump_tikz) and (not args.caterpillar_only)
     dump_tikz_dir = args.dump_tikz_dir or out_dir
     if dump_tikz_enabled:
         os.makedirs(dump_tikz_dir, exist_ok=True)
@@ -711,20 +785,29 @@ def main():
         return os.path.join(dump_tikz_dir, f"{label}_network.tex")
 
     print(f"BLIF files will be written to: {out_dir}")
+    if args.caterpillar_only:
+        print("CATERPILLAR-ONLY MODE: our pipeline (build_gate_groups/"
+              "pebble_gates/gadget synthesis) will NOT be run for any DAG "
+              "in this batch -- only the caterpillar shim's own runtime "
+              "will be measured. See module docstring, 'CATERPILLAR-ONLY "
+              "MODE (--caterpillar-only)'.")
     if dump_json_enabled:
         print(f"Pebbling debug JSON files will be written to: {dump_json_dir} "
               f"(pass --no-dump-pebbling-json to disable)")
-    else:
+    elif not args.caterpillar_only:
         print("Pebbling debug JSON dump disabled (--no-dump-pebbling-json).")
     if dump_tikz_enabled:
         print(f"TikZ network diagrams will be written to: {dump_tikz_dir} "
               f"(pass --no-dump-tikz to disable; compile with pdflatex)")
-    else:
+    elif not args.caterpillar_only:
         print("TikZ network diagram dump disabled (--no-dump-tikz).")
     if not args.caterpillar_bin:
         print("NOTE: --caterpillar-bin not provided; caterpillar T-counts "
-              "will be skipped, only our own pipeline's T-count is reported.\n"
-              "Build test/blif_to_tcount.cpp first, then pass its path here.")
+              "will be skipped" +
+              (", and --caterpillar-only has nothing to run." if args.caterpillar_only
+               else ", only our own pipeline's T-count is reported.\n"
+                    "Build test/blif_to_tcount.cpp first, then pass its "
+                    "path here."))
 
     rows = []
 
@@ -747,11 +830,14 @@ def main():
                 })
                 continue
 
-            our = run_our_pipeline(
-                net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
-                dump_json_path=_dump_json_path_for(label),
-                dump_tikz_path=_dump_tikz_path_for(label),
-            )
+            if args.caterpillar_only:
+                our = _skipped_ours_result()
+            else:
+                our = run_our_pipeline(
+                    net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+                    dump_json_path=_dump_json_path_for(label),
+                    dump_tikz_path=_dump_tikz_path_for(label),
+                )
             cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
             rows.append({
@@ -819,11 +905,14 @@ def main():
             })
             continue
 
-        our = run_our_pipeline(
-            net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
-            dump_json_path=_dump_json_path_for(label),
-            dump_tikz_path=_dump_tikz_path_for(label),
-        )
+        if args.caterpillar_only:
+            our = _skipped_ours_result()
+        else:
+            our = run_our_pipeline(
+                net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
+                dump_json_path=_dump_json_path_for(label),
+                dump_tikz_path=_dump_tikz_path_for(label),
+            )
         cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
         rows.append({
@@ -850,98 +939,114 @@ def main():
     header = (
         f"{'label':32s} {'kind':12s} {'pis':>4s} {'pos':>4s} {'gates':>6s} "
         f"{'ours-T':>7s} {'ours-q':>7s} {'cat-T':>6s} {'cat-q':>6s} "
-        f"{'and_pos':>8s} {'corr-T':>7s}"
+        f"{'and_pos':>8s} {'corr-T':>7s} {'cat-s':>8s}"
     )
     print(header)
     print("-" * len(header))
 
     for r in rows:
-        ours_t = str(r.get("our_t_count")) if r.get("our_t_count") is not None else "ERR"
+        ours_t = str(r.get("our_t_count")) if r.get("our_t_count") is not None else (
+            "SKIP" if args.caterpillar_only else "ERR"
+        )
         ours_q = str(r.get("our_qubits", "")) if r.get("our_qubits") is not None else "-"
         cat_t = str(r.get("cat_t_count")) if r.get("cat_t_count") is not None else "N/A"
         cat_q = str(r.get("cat_qubits")) if r.get("cat_qubits") is not None else "N/A"
         and_pos = str(r.get("cat_and_pos")) if r.get("cat_and_pos") is not None else "N/A"
         corr_t = str(r.get("cat_corrected_t")) if r.get("cat_corrected_t") is not None else "N/A"
+        cat_s = (
+            f"{r.get('cat_elapsed_s'):.2f}" if r.get("cat_elapsed_s") is not None else "N/A"
+        )
         print(
             f"{r['label']:32s} {r['kind']:12s} {r['num_pis']:>4d} "
             f"{r['num_pos']:>4d} {r['num_gates']:>6d} "
             f"{ours_t:>7s} {ours_q:>7s} {cat_t:>6s} {cat_q:>6s} "
-            f"{and_pos:>8s} {corr_t:>7s}"
+            f"{and_pos:>8s} {corr_t:>7s} {cat_s:>8s}"
         )
-        if r.get("our_error"):
+        if r.get("our_error") and not args.caterpillar_only:
             print(f"    [ours error] {r['our_error']}")
         if r.get("cat_error"):
             print(f"    [caterpillar] {r['cat_error']}")
 
-    valid = [
-        r for r in rows
-        if r.get("our_t_count") is not None and r.get("cat_t_count") is not None
-    ]
-    if valid:
+    if args.caterpillar_only:
         print("\n" + "-" * 110)
-        print("SUMMARY (only rows with both T-counts available)")
-        print("-" * 110)
-        total_ours = sum(r["our_t_count"] for r in valid)
-        total_cat = sum(r["cat_t_count"] for r in valid)
-        print(f"DAGs compared:             {len(valid)}")
-        print(f"Total ours T-count:        {total_ours}")
-        print(f"Total caterpillar T-count: {total_cat}")
-        if total_cat > 0:
-            print(f"Ours / caterpillar ratio:  {total_ours / total_cat:.3f}")
-        for r in valid:
-            delta = r["our_t_count"] - r["cat_t_count"]
-            print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
-                  f"caterpillar={r['cat_t_count']:<6d} delta={delta:+d}")
-
-        valid_corrected = [r for r in valid if r.get("cat_corrected_t") is not None]
-        if valid_corrected:
-            print("\n" + "-" * 110)
-            print("SUMMARY (corrected caterpillar T-count: "
-                  "2*t_count - and_pos, see module docstring)")
-            print("-" * 110)
-            total_corrected = sum(r["cat_corrected_t"] for r in valid_corrected)
-            print(f"Total corrected caterpillar T-count: {total_corrected}")
-            if total_corrected > 0:
-                total_ours_corrected_set = sum(
-                    r["our_t_count"] for r in valid_corrected
-                )
-                print(f"Ours / corrected-caterpillar ratio:  "
-                      f"{total_ours_corrected_set / total_corrected:.3f}")
-
-            # Per-row (delta / corrected_cat) ratio, averaged unweighted
-            # across all valid rows -- see module docstring,
-            # "CATERPILLAR 'CORRECTED' T-COUNT ESTIMATE", for how this
-            # differs from the sum-of-sums ratio above.
-            delta_ratios = [
-                (r["our_t_count"] - r["cat_corrected_t"]) / r["cat_corrected_t"]
-                for r in valid_corrected
-                if r["cat_corrected_t"] != 0
-            ]
-            skipped_zero_corrected = [
-                r for r in valid_corrected if r["cat_corrected_t"] == 0
-            ]
-            if delta_ratios:
-                avg_delta_ratio = sum(delta_ratios) / len(delta_ratios)
-                print(f"Average delta/corrected-cat ratio:  "
-                      f"{avg_delta_ratio:+.3f} "
-                      f"(mean of per-circuit (ours-T - corrected-cat-T) / "
-                      f"corrected-cat-T, unweighted across "
-                      f"{len(delta_ratios)} row(s))")
-            if skipped_zero_corrected:
-                skipped_labels = ", ".join(r["label"] for r in skipped_zero_corrected)
-                print(f"  (skipped {len(skipped_zero_corrected)} row(s) with "
-                      f"corrected-cat-T == 0 when averaging the ratio: "
-                      f"{skipped_labels})")
-
-            for r in valid_corrected:
-                delta = r["our_t_count"] - r["cat_corrected_t"]
-                print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
-                      f"corrected_cat={r['cat_corrected_t']:<6d} "
-                      f"(raw_cat={r['cat_t_count']}, and_pos={r['cat_and_pos']}) "
-                      f"delta={delta:+d}")
+        print("SUMMARY skipped: --caterpillar-only was passed, so our "
+              "pipeline's T-count was never computed for any row -- "
+              "nothing to compare. See the 'cat-s' column above for "
+              "per-row caterpillar wall-clock time.")
+        cat_times = [r["cat_elapsed_s"] for r in rows if r.get("cat_elapsed_s") is not None]
+        if cat_times:
+            print(f"Total caterpillar wall-clock time across "
+                  f"{len(cat_times)} row(s): {sum(cat_times):.2f}s")
     else:
-        print("\nNo rows had both T-counts available -- nothing to summarize. "
-              "Pass --caterpillar-bin to enable the comparison.")
+        valid = [
+            r for r in rows
+            if r.get("our_t_count") is not None and r.get("cat_t_count") is not None
+        ]
+        if valid:
+            print("\n" + "-" * 110)
+            print("SUMMARY (only rows with both T-counts available)")
+            print("-" * 110)
+            total_ours = sum(r["our_t_count"] for r in valid)
+            total_cat = sum(r["cat_t_count"] for r in valid)
+            print(f"DAGs compared:             {len(valid)}")
+            print(f"Total ours T-count:        {total_ours}")
+            print(f"Total caterpillar T-count: {total_cat}")
+            if total_cat > 0:
+                print(f"Ours / caterpillar ratio:  {total_ours / total_cat:.3f}")
+            for r in valid:
+                delta = r["our_t_count"] - r["cat_t_count"]
+                print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
+                      f"caterpillar={r['cat_t_count']:<6d} delta={delta:+d}")
+
+            valid_corrected = [r for r in valid if r.get("cat_corrected_t") is not None]
+            if valid_corrected:
+                print("\n" + "-" * 110)
+                print("SUMMARY (corrected caterpillar T-count: "
+                      "2*t_count - and_pos, see module docstring)")
+                print("-" * 110)
+                total_corrected = sum(r["cat_corrected_t"] for r in valid_corrected)
+                print(f"Total corrected caterpillar T-count: {total_corrected}")
+                if total_corrected > 0:
+                    total_ours_corrected_set = sum(
+                        r["our_t_count"] for r in valid_corrected
+                    )
+                    print(f"Ours / corrected-caterpillar ratio:  "
+                          f"{total_ours_corrected_set / total_corrected:.3f}")
+
+                # Per-row (delta / corrected_cat) ratio, averaged unweighted
+                # across all valid rows -- see module docstring,
+                # "CATERPILLAR 'CORRECTED' T-COUNT ESTIMATE", for how this
+                # differs from the sum-of-sums ratio above.
+                delta_ratios = [
+                    (r["our_t_count"] - r["cat_corrected_t"]) / r["cat_corrected_t"]
+                    for r in valid_corrected
+                    if r["cat_corrected_t"] != 0
+                ]
+                skipped_zero_corrected = [
+                    r for r in valid_corrected if r["cat_corrected_t"] == 0
+                ]
+                if delta_ratios:
+                    avg_delta_ratio = sum(delta_ratios) / len(delta_ratios)
+                    print(f"Average delta/corrected-cat ratio:  "
+                          f"{avg_delta_ratio:+.3f} "
+                          f"(mean of per-circuit (ours-T - corrected-cat-T) / "
+                          f"corrected-cat-T, unweighted across "
+                          f"{len(delta_ratios)} row(s))")
+                if skipped_zero_corrected:
+                    skipped_labels = ", ".join(r["label"] for r in skipped_zero_corrected)
+                    print(f"  (skipped {len(skipped_zero_corrected)} row(s) with "
+                          f"corrected-cat-T == 0 when averaging the ratio: "
+                          f"{skipped_labels})")
+
+                for r in valid_corrected:
+                    delta = r["our_t_count"] - r["cat_corrected_t"]
+                    print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
+                          f"corrected_cat={r['cat_corrected_t']:<6d} "
+                          f"(raw_cat={r['cat_t_count']}, and_pos={r['cat_and_pos']}) "
+                          f"delta={delta:+d}")
+        else:
+            print("\nNo rows had both T-counts available -- nothing to summarize. "
+                  "Pass --caterpillar-bin to enable the comparison.")
 
     if cleanup_dir:
         import shutil
