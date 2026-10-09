@@ -52,6 +52,9 @@ The NEW approach (`build_gate_groups`, this file) instead:
   5. SPLITS any group whose `outputs` mix a genuine primary output (PO)
      with a non-PO output (see "MIXED PO GROUPS" below) -- this step is
      essential and was missing from an earlier revision.
+  5.5. RECOMBINES small adjacent non-PO fragments left behind by step 5
+     (see "RECOMBINING SMALL NON-PO FRAGMENTS" below) -- without ever
+     reintroducing a mixed-PO group.
   6. Derives gate-level dependencies strictly from boundary inputs
      (a group's external fanins), never from incidental path traversal.
   7. Validates the result: unique ownership (partition), and acyclicity
@@ -199,6 +202,47 @@ regardless of how PO and non-PO outputs happen to be interleaved in
 topological order.
 
 ======================================================================
+RECOMBINING SMALL NON-PO FRAGMENTS (`_recombine_small_nonpo_groups`)
+======================================================================
+
+`_split_mixed_po_groups` only ever SPLITS at PO/non-PO transition
+points -- it never reconsiders whether adjacent non-PO fragments it
+produces could safely be recombined. On circuits where primary outputs
+are densely interleaved with internal logic in topological order (e.g.
+EPFL's `multiplier.blif`, where early output bits like f[0] depend on
+very shallow logic while later bits depend on much deeper shared
+carry-chain logic), this density difference causes a long run of TINY
+non-PO fragments in the PO-dense region, even though nothing about
+pebble budget or dependency structure required such small groups
+there. Empirically, on `multiplier.blif`, group count was observed to
+jump from ~100 (after Phase 2.5) to ~301 (after Phase 3) purely from
+this effect.
+
+`_recombine_small_nonpo_groups`, run as Phase 3.5 (directly after
+Phase 3, before dependency derivation), greedily re-merges RUNS of
+topologically ADJACENT groups that are ALL entirely non-PO (i.e. none
+of them own a genuine primary output), up to a pebble-budget-bounded
+size.
+
+SAFETY: this can NEVER reintroduce a mixed-PO group, because it only
+ever merges groups that are ALREADY fully non-PO with OTHER
+fully-non-PO groups; any group containing a genuine PO is always left
+untouched. Convexity (see point 2 above) is preserved because only
+groups ADJACENT in the current group list are combined -- the merged
+group is still a single CONTIGUOUS range of whatever topological order
+Phase 1 used, since each existing group is itself already contiguous
+and adjacency-merging contiguous ranges produces another contiguous
+range. This mirrors the exact adjacency-based safety argument already
+used by `_merge_sibling_fanout_groups`. As defense in depth, Phase 5's
+cycle check (`find_gate_dependency_cycle`) still runs after this phase
+and would catch any violation immediately.
+
+This is a SINGLE greedy left-to-right pass (not a fixed point) --
+sufficient since merging monotonically increases group size and
+decreases group count; there is no oscillation risk the way
+`_split_mixed_po_groups`'s fixed-point loop has to guard against.
+
+======================================================================
 QUBIT RECLAMATION POLICY (`_replay_gate_pebbling`)
 ======================================================================
 
@@ -333,7 +377,7 @@ up and escalates. On a large, densely interleaved circuit (e.g. EPFL's
 `hyp.blif`), a single round was observed to run for 2000+ incremental
 steps before giving up.
 
-Two independent additions address this:
+Three independent additions address this:
 
   1. `max_escalations` (optional): caps the number of ESCALATION
      ROUNDS attempted, independent of `max_pebbles_cap`. If the limit
@@ -349,7 +393,55 @@ Two independent additions address this:
      (under the key "escalation_log") via `dump_pebbling_debug_json`'s
      `extra` parameter whenever `dump_json` is provided -- including
      on failure paths (max_escalations reached, max_pebbles_cap
-     reached, etc.), not just on success.
+     reached, timeout, etc.), not just on success.
+
+  3. `timeout_s` (optional): an overall WALL-CLOCK budget -- see
+     "OVERALL WALL-CLOCK TIMEOUT" below.
+
+======================================================================
+OVERALL WALL-CLOCK TIMEOUT (`timeout_s`, `GatePebbleSolver.z3_timeout_ms`)
+======================================================================
+
+Mirrors `run_caterpillar_experiments.py`'s `run_caterpillar`, which
+wraps the EXTERNAL caterpillar subprocess in `subprocess.run(...,
+timeout=...)` so a stuck/slow caterpillar invocation can't hang the
+whole batch. OUR OWN in-process Z3 search had no equivalent safeguard
+-- a single pathological `solve()` call, or an escalation loop that
+simply never converges, could run indefinitely.
+
+Two layers address this, used together:
+
+  1. `GatePebbleSolver(..., z3_timeout_ms=...)`: sets Z3's own
+     per-`check()` "timeout" parameter, so a SINGLE `solve()` call
+     cannot itself run past the given number of milliseconds, no
+     matter how hard that particular check happens to be.
+
+  2. `_WallClockBudget` (internal helper) + `timeout_s` parameter on
+     `pebble_gates` / `pebble_gates_by_toggle_budget`: tracks overall
+     elapsed wall-clock time across the ENTIRE search (every
+     escalation round, every incremental step within a round). Checked
+     at the top of every round and every incremental step, so a loop
+     that keeps finding fast UNSAT answers (never individually hitting
+     Z3's own per-check timeout) still gets abandoned promptly once
+     the overall budget is exhausted. Each fresh `GatePebbleSolver`
+     built during the search is given `z3_timeout_ms=budget.
+     remaining_ms()`, so layer 1 and layer 2 share the same deadline
+     and a solve() call started right at the edge of the budget can't
+     itself blow past it either.
+
+On exhaustion, both `pebble_gates` and `pebble_gates_by_toggle_budget`
+raise `PebbleTimeoutError` (a `RuntimeError` subclass, so existing
+`except Exception` call sites -- e.g. `run_caterpillar_experiments.py`'s
+`run_our_pipeline` -- continue to catch it without modification,
+though catching `PebbleTimeoutError` specifically lets you distinguish
+"timed out" from "no schedule exists" in reporting). The partial
+`escalation_log` accumulated so far is still written to `dump_json`
+(if provided), with `"outcome": "timeout"`.
+
+If `timeout_s` is omitted (None, the default), no overall time limit
+is imposed and behavior is unchanged from before -- only
+`max_escalations` / `max_pebbles_cap` / `max_steps` bound the search,
+exactly as previously.
 
 ======================================================================
 TOGGLE-COUNT BUDGET SEARCH (`pebble_gates_by_toggle_budget`)
@@ -1356,6 +1448,93 @@ def _split_mixed_po_groups(net: PebblingNetwork, groups, pos_set):
     return groups
 
 
+def _recombine_small_nonpo_groups(net: PebblingNetwork, groups, pos_set,
+                                   max_pebbles, children=None,
+                                   recombine_slack=1.0):
+    """
+    Re-merges RUNS of topologically ADJACENT groups that are all
+    entirely NON-PO (i.e. `outputs` contains no genuine primary
+    output) back together, up to a pebble-budget-bounded size. This
+    reclaims the group-count blowup left behind by
+    `_split_mixed_po_groups`, which only ever SPLITS at PO/non-PO
+    transition points and never reconsiders whether adjacent non-PO
+    fragments could safely be recombined. See module docstring
+    ("RECOMBINING SMALL NON-PO FRAGMENTS") for the full rationale.
+
+    SAFETY: this can NEVER reintroduce a mixed-PO group, because it
+    only ever merges groups that are ALREADY fully non-PO (checked via
+    `pos_set`, same check `_split_mixed_po_groups` itself uses) with
+    OTHER fully-non-PO groups. A group containing any genuine PO is
+    never touched by this pass -- it is always left exactly as-is,
+    preserving the invariant `_split_mixed_po_groups` established (see
+    module docstring, "MIXED PO GROUPS").
+
+    Convexity (see module docstring, point 2) is preserved because
+    only groups ADJACENT in the current group list are combined --
+    the merged group is still a single CONTIGUOUS range of whatever
+    topological order Phase 1 used, since each existing group is
+    itself already contiguous and adjacency-merging contiguous ranges
+    produces another contiguous range.
+
+    Budget: a run accumulates consecutive non-PO groups only while the
+    SUM of `_pebble_cost(n)` across all accumulated nodes stays within
+    `max_pebbles * recombine_slack`. `recombine_slack` defaults to 1.0
+    (stay within the real budget exactly); pass > 1.0 to allow modest
+    overshoot if you've already padded `max_pebbles` with its own
+    safety margin elsewhere and want to prioritize fewer groups over
+    staying strictly under the raw number.
+
+    This is a SINGLE greedy left-to-right pass (not a fixed point) --
+    sufficient since merging monotonically increases group size and
+    decreases group count; there is no oscillation risk the way
+    `_split_mixed_po_groups`'s fixed-point loop has to guard against.
+
+    Returns a new list of `GateGroup` objects (freshly renumbered)
+    with boundaries recomputed via `_compute_boundaries`.
+    """
+    if children is None:
+        children = net.build_children()
+
+    def _is_po_group(g):
+        return any(n in pos_set for n in g.outputs)
+
+    node_lists = []
+    run_nodes = []
+    run_cost = 0
+
+    def _flush_run():
+        nonlocal run_nodes, run_cost
+        if run_nodes:
+            node_lists.append(run_nodes)
+        run_nodes = []
+        run_cost = 0
+
+    budget = max_pebbles * recombine_slack
+
+    for g in groups:
+        if _is_po_group(g):
+            # PO-owning groups are never touched or merged into --
+            # flush whatever non-PO run was accumulating first, then
+            # pass this PO group through unchanged.
+            _flush_run()
+            node_lists.append(g.nodes)
+            continue
+
+        group_cost = sum(_pebble_cost(n) for n in g.nodes)
+
+        if run_nodes and (run_cost + group_cost > budget):
+            _flush_run()
+
+        run_nodes.extend(g.nodes)
+        run_cost += group_cost
+
+    _flush_run()
+
+    new_groups = _renumber_groups(node_lists)
+    _compute_boundaries(net, new_groups, pos_set, children=children)
+    return new_groups
+
+
 def _pebble_cost(node):
     """
     Returns this node's Phase-1 contribution to the gate-group pebble
@@ -1446,8 +1625,48 @@ def _dependency_chain_topo_order(net: PebblingNetwork):
     return order
 
 
+def _print_group_size_histogram(groups, phase_label,
+                                 bucket_edges=(1, 2, 3, 5, 10, 25, 50, 100, 200, 300)):
+    """
+    Prints min/median/mean/max group size (by node count), the
+    smallest/largest 10 sizes, and a bucketed histogram, so skewed
+    distributions (many tiny fragments + a few huge groups) are
+    visible directly rather than hidden behind a single average.
+    """
+    if not groups:
+        print(f"[build_gate_groups] [{phase_label}] no groups to measure.")
+        return
+
+    sizes = sorted(len(g.nodes) for g in groups)
+    n = len(sizes)
+    mean = sum(sizes) / n
+    median = sizes[n // 2]
+
+    print(f"[build_gate_groups] [{phase_label}] group size stats "
+          f"(n={n}): min={sizes[0]} median={median} max={sizes[-1]} "
+          f"mean={mean:.1f}")
+    print(f"[build_gate_groups] [{phase_label}] smallest 10 sizes: {sizes[:10]}")
+    print(f"[build_gate_groups] [{phase_label}] largest 10 sizes:  {sizes[-10:]}")
+
+    edges = list(bucket_edges) + [float("inf")]
+    counts = [0] * len(edges)
+    for s in sizes:
+        for i, edge in enumerate(edges):
+            if s <= edge:
+                counts[i] += 1
+                break
+
+    print(f"[build_gate_groups] [{phase_label}] size histogram:")
+    for edge, count in zip(edges, counts):
+        label = f"<= {edge}" if edge != float("inf") else f"> {bucket_edges[-1]}"
+        bar = "#" * min(count, 60)
+        print(f"    {label:>10s}: {count:>5d} {bar}")
+
+
 def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="dependency_chain",
-                       merge_sibling_fanouts=True, merge_pebble_slack=1.5):
+                       merge_sibling_fanouts=True, merge_pebble_slack=1.5,
+                       recombine_small_nonpo=True, recombine_slack=1.0,
+                       debug_print=False):
     """
     Gate-group construction algorithm. See module docstring for the
     full rationale. Steps:
@@ -1456,11 +1675,17 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
       2. Boundary computation (outputs/internal/inputs)
       2.5. Sibling fanout merging (adjacency + slack-bounded)
       3. Mixed-PO group splitting (fixed point)
+      3.5. Recombine small adjacent non-PO fragments (adjacency + slack-bounded)
       4. Dependency derivation from boundary inputs
       5. Validation (partition uniqueness, acyclicity)
 
     Raises `ValueError` if `max_pebbles < len(net.pos)`, or if
     `topo_order` is not one of the recognized values.
+
+    `debug_print`: if True, prints group count + a size histogram
+    after every phase that changes group membership, to help diagnose
+    unexpected group-count blowups (see module docstring,
+    "RECOMBINING SMALL NON-PO FRAGMENTS").
     """
     if max_pebbles < len(net.pos):
         raise ValueError(
@@ -1520,6 +1745,10 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
 
     finalize()
 
+    if debug_print:
+        print(f"[build_gate_groups] after Phase 1 (partition): {len(groups)} groups")
+        _print_group_size_histogram(groups, "Phase 1")
+
     # --- Phase 2: boundary computation ---------------------------------------
     _compute_boundaries(net, groups, pos_set)
 
@@ -1528,9 +1757,25 @@ def build_gate_groups(net: PebblingNetwork, max_pebbles: int, topo_order="depend
         groups = _merge_sibling_fanout_groups(
             net, groups, pos_set, max_pebbles, merge_pebble_slack=merge_pebble_slack
         )
+        if debug_print:
+            print(f"[build_gate_groups] after Phase 2.5 (sibling merge): {len(groups)} groups")
+            _print_group_size_histogram(groups, "Phase 2.5")
 
     # --- Phase 3: split mixed-PO groups ---------------------------------------
     groups = _split_mixed_po_groups(net, groups, pos_set)
+    if debug_print:
+        print(f"[build_gate_groups] after Phase 3 (mixed-PO split): {len(groups)} groups")
+        _print_group_size_histogram(groups, "Phase 3")
+
+    # --- Phase 3.5: recombine small adjacent non-PO fragments -----------------
+    if recombine_small_nonpo:
+        groups = _recombine_small_nonpo_groups(
+            net, groups, pos_set, max_pebbles, recombine_slack=recombine_slack
+        )
+        if debug_print:
+            print(f"[build_gate_groups] after Phase 3.5 (recombine small "
+                  f"non-PO fragments): {len(groups)} groups")
+            _print_group_size_histogram(groups, "Phase 3.5")
 
     # --- Phase 4: dependency derivation ---------------------------------------
     node_owner = {}
@@ -1584,10 +1829,11 @@ def _validate_gate_partition(net: PebblingNetwork, groups):
 
 def _validate_no_mixed_po_groups(groups, pos_set):
     """
-    Defensive check: confirms `_split_mixed_po_groups` actually
-    achieved its invariant -- no group's `outputs` mix a genuine PO
-    with a non-PO output. Raises `AssertionError` if violated (would
-    indicate a bug in the splitting logic).
+    Defensive check: confirms `_split_mixed_po_groups` (and
+    `_recombine_small_nonpo_groups`) actually preserved the invariant
+    -- no group's `outputs` mix a genuine PO with a non-PO output.
+    Raises `AssertionError` if violated (would indicate a bug in the
+    splitting/recombining logic).
     """
     for g in groups:
         po_outputs = [n for n in g.outputs if n in pos_set]
@@ -1701,6 +1947,49 @@ def print_gate_node_groups(gates):
 # pure-XOR gates are exempt from the cap)
 # ---------------------------------------------------------------------------
 
+class PebbleTimeoutError(RuntimeError):
+    """
+    Raised when the overall wall-clock budget passed to `pebble_gates`
+    or `pebble_gates_by_toggle_budget` (via `timeout_s`) is exceeded.
+    Mirrors `run_caterpillar_experiments.py`'s `run_caterpillar`, which
+    wraps the EXTERNAL caterpillar subprocess in `subprocess.run(...,
+    timeout=...)` -- this covers OUR OWN in-process Z3 search instead.
+    See module docstring, "OVERALL WALL-CLOCK TIMEOUT".
+    """
+    pass
+
+
+class _WallClockBudget:
+    """
+    Simple deadline tracker for `timeout_s`. `remaining_ms()` returns
+    the number of milliseconds left (clamped to >= 1), for passing
+    into a fresh `GatePebbleSolver`'s `z3_timeout_ms` so no single
+    `solve()` call is ever allowed to run past the overall deadline
+    either. `expired()` is checked at the top of every escalation
+    round / incremental step, so the loop can exit promptly between
+    `solve()` calls too, not just via Z3's own internal per-check
+    timeout.
+    """
+
+    def __init__(self, timeout_s):
+        self.timeout_s = timeout_s
+        self.start = time.time()
+
+    def expired(self):
+        if self.timeout_s is None:
+            return False
+        return (time.time() - self.start) >= self.timeout_s
+
+    def elapsed_s(self):
+        return time.time() - self.start
+
+    def remaining_ms(self):
+        if self.timeout_s is None:
+            return None
+        remaining = self.timeout_s - (time.time() - self.start)
+        return max(1, int(remaining * 1000))
+
+
 class GatePebbleSolver:
     """
     Pebbles whole GateGroup objects. A gate can toggle only if every
@@ -1724,12 +2013,19 @@ class GatePebbleSolver:
     transitioning to True (newly pebbling) at that same step. A gate
     with no dependents at all may be computed once and uncomputed once,
     but never recomputed.
+
+    `z3_timeout_ms` (optional): sets Z3's own per-`check()` "timeout"
+    parameter, so a SINGLE `solve()`/`solve_with_toggle_budget()` call
+    cannot itself run past the given number of milliseconds. See
+    module docstring, "OVERALL WALL-CLOCK TIMEOUT".
     """
 
-    def __init__(self, gates, max_pebbles, net=None):
+    def __init__(self, gates, max_pebbles, net=None, z3_timeout_ms=None):
         self.gates = gates
         self.max_pebbles = max_pebbles
         self.slv = Solver()
+        if z3_timeout_ms is not None:
+            self.slv.set("timeout", int(z3_timeout_ms))
         self.num_steps = 0
         self.current = {}       # gid -> (s, a)
         self.ever = {}          # gid -> ever_computed Bool
@@ -1944,7 +2240,7 @@ def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
     payload. Used by `pebble_gates` / `pebble_gates_by_toggle_budget`
     to attach `escalation_log` (see module docstring, "ESCALATION
     ROUND LIMIT AND PER-ROUND RUNTIME MARKERS" /
-    "TOGGLE-COUNT BUDGET SEARCH").
+    "TOGGLE-COUNT BUDGET SEARCH" / "OVERALL WALL-CLOCK TIMEOUT").
     """
     import json
     payload = {}
@@ -1968,11 +2264,29 @@ def dump_pebbling_debug_json(path, node_steps=None, gate_groups=None,
 
 def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
                   auto_increase_pebbles=True, max_pebbles_cap=None, net=None,
-                  dump_json=None, max_escalations=None):
+                  dump_json=None, max_escalations=None, timeout_s=None):
     """
     Solves for a valid gate-level pebbling schedule with an escalating
     max_pebbles search. See module docstring and `GatePebbleSolver` for
     the full solving semantics.
+
+    timeout_s: optional overall WALL-CLOCK budget (seconds) for the
+    ENTIRE search (across all escalation rounds and all incremental
+    steps within a round) -- mirrors `run_caterpillar_experiments.py`'s
+    `run_caterpillar`'s `timeout` parameter for the external
+    caterpillar subprocess, just applied to our own in-process Z3
+    search instead. Checked at the top of every escalation round AND
+    at the top of every incremental `add_step()` iteration within a
+    round. Each individual Z3 `solve()` call is ALSO given a matching
+    remaining-time budget (via `GatePebbleSolver`'s `z3_timeout_ms`),
+    so a single pathological `check()` call cannot itself run past the
+    deadline. Raises `PebbleTimeoutError` (a `RuntimeError` subclass)
+    if the budget is exhausted before a schedule is found; the partial
+    `escalation_log` is still written to `dump_json` if provided, with
+    `outcome: "timeout"`. If omitted (None), no overall time limit is
+    imposed (only `max_escalations`/`max_pebbles_cap`/`max_steps`
+    apply, as before). See module docstring, "OVERALL WALL-CLOCK
+    TIMEOUT".
 
     max_escalations: optional hard cap on the number of ESCALATION
     ROUNDS attempted (i.e. distinct `current_pebbles` values tried),
@@ -2003,8 +2317,27 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
     current_pebbles = max_pebbles
     escalations_tried = 0
     escalation_log = []
+    budget = _WallClockBudget(timeout_s)
+
+    def _timeout_bail(partial_log):
+        if dump_json:
+            dump_pebbling_debug_json(
+                dump_json,
+                extra={"escalation_log": partial_log, "outcome": "timeout",
+                       "elapsed_s": budget.elapsed_s(), "timeout_s": timeout_s},
+            )
+        raise PebbleTimeoutError(
+            f"pebble_gates exceeded its overall timeout_s={timeout_s}s "
+            f"after {len(partial_log)} escalation round(s) "
+            f"({budget.elapsed_s():.2f}s elapsed). Pass a larger "
+            f"timeout_s, or consider pebble_gates_by_toggle_budget for "
+            f"large/gate-dense circuits."
+        )
 
     while current_pebbles <= max_pebbles_cap:
+        if budget.expired():
+            _timeout_bail(escalation_log)
+
         if max_escalations is not None and escalations_tried >= max_escalations:
             if dump_json:
                 dump_pebbling_debug_json(
@@ -2028,10 +2361,13 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
         if step_cap == "auto":
             step_cap = max(4, len(gates) * 4)
 
-        s = GatePebbleSolver(gates, current_pebbles, net=net)
+        s = GatePebbleSolver(gates, current_pebbles, net=net,
+                              z3_timeout_ms=budget.remaining_ms())
         s.init()
         r = s.solve()
         while r == unsat and (step_cap is None or s.num_steps < step_cap):
+            if budget.expired():
+                _timeout_bail(escalation_log)
             s.add_step()
             r = s.solve()
 
@@ -2104,7 +2440,7 @@ def pebble_gates(gates, max_pebbles, max_steps="auto", verbose=True,
 def pebble_gates_by_toggle_budget(gates, max_pebbles, net, num_steps=None,
                                    start_toggle_budget=None, max_toggle_budget=None,
                                    toggle_budget_step=1, max_escalations=None,
-                                   verbose=True, dump_json=None):
+                                   verbose=True, dump_json=None, timeout_s=None):
     """
     Alternative to `pebble_gates`. See module docstring, "TOGGLE-COUNT
     BUDGET SEARCH", for the full rationale.
@@ -2133,6 +2469,12 @@ def pebble_gates_by_toggle_budget(gates, max_pebbles, net, num_steps=None,
     `max_escalations`: caps the number of toggle-budget rounds
     attempted, same semantics as in `pebble_gates`.
 
+    `timeout_s`: same overall wall-clock budget semantics as
+    `pebble_gates`'s `timeout_s` -- covers the initial
+    `build_all_steps` call PLUS every subsequent toggle-budget
+    escalation round. See module docstring, "OVERALL WALL-CLOCK
+    TIMEOUT".
+
     Prints the same per-round runtime marker style as `pebble_gates`
     and records an `escalation_log` (per round: budget tried, result,
     elapsed time), dumped to `dump_json` if provided.
@@ -2148,19 +2490,41 @@ def pebble_gates_by_toggle_budget(gates, max_pebbles, net, num_steps=None,
     if max_toggle_budget is None:
         max_toggle_budget = 2 * len(gates) * max(1, num_steps)
 
+    budget = _WallClockBudget(timeout_s)
+
+    def _timeout_bail(partial_log):
+        if dump_json:
+            dump_pebbling_debug_json(
+                dump_json,
+                extra={"escalation_log": partial_log, "outcome": "timeout",
+                       "elapsed_s": budget.elapsed_s(), "timeout_s": timeout_s},
+            )
+        raise PebbleTimeoutError(
+            f"pebble_gates_by_toggle_budget exceeded its overall "
+            f"timeout_s={timeout_s}s after {len(partial_log)} round(s) "
+            f"({budget.elapsed_s():.2f}s elapsed)."
+        )
+
     build_start = time.time()
-    s = GatePebbleSolver(gates, max_pebbles, net=net)
+    s = GatePebbleSolver(gates, max_pebbles, net=net,
+                          z3_timeout_ms=budget.remaining_ms())
     s.init()
     s.build_all_steps(num_steps)
     build_elapsed = time.time() - build_start
     print(f"[toggle-budget setup] built {num_steps} step(s) once "
           f"({build_elapsed:.2f}s)")
 
+    if budget.expired():
+        _timeout_bail([])
+
     current_budget = start_toggle_budget
     escalations_tried = 0
     escalation_log = []
 
     while current_budget <= max_toggle_budget:
+        if budget.expired():
+            _timeout_bail(escalation_log)
+
         if max_escalations is not None and escalations_tried >= max_escalations:
             if dump_json:
                 dump_pebbling_debug_json(
@@ -2843,6 +3207,10 @@ if __name__ == "__main__":
                               "growth itself. See module docstring, "
                               "'ESCALATION ROUND LIMIT AND PER-ROUND RUNTIME "
                               "MARKERS'.")
+    parser.add_argument("--timeout-s", type=float, default=None,
+                         help="Overall wall-clock timeout (seconds) for the "
+                              "pebbling search. See module docstring, "
+                              "'OVERALL WALL-CLOCK TIMEOUT'.")
     parser.add_argument("--use-toggle-budget", action="store_true",
                          help="Use pebble_gates_by_toggle_budget instead of "
                               "pebble_gates -- escalates a global toggle-"
@@ -2868,6 +3236,18 @@ if __name__ == "__main__":
     parser.add_argument("--merge-pebble-slack", type=float, default=1.5,
                          help="Slack multiplier on max_pebbles allowed when "
                               "considering a sibling fanout merge. Default 1.5.")
+    parser.add_argument("--no-recombine-small-nonpo", action="store_true",
+                         help="Disable Phase 3.5 recombination of small "
+                              "adjacent non-PO fragments. See module "
+                              "docstring, 'RECOMBINING SMALL NON-PO "
+                              "FRAGMENTS'.")
+    parser.add_argument("--recombine-slack", type=float, default=1.0,
+                         help="Slack multiplier on max_pebbles allowed when "
+                              "recombining small non-PO fragments in Phase "
+                              "3.5. Default 1.0 (stay within budget exactly).")
+    parser.add_argument("--debug-group-counts", action="store_true",
+                         help="Print group count + size histogram after "
+                              "every phase of build_gate_groups.")
     args = parser.parse_args()
 
     pebble_limit = args.max_pebbles
@@ -2927,6 +3307,9 @@ if __name__ == "__main__":
         topo_order=args.topo_order,
         merge_sibling_fanouts=not args.no_merge_siblings,
         merge_pebble_slack=args.merge_pebble_slack,
+        recombine_small_nonpo=not args.no_recombine_small_nonpo,
+        recombine_slack=args.recombine_slack,
+        debug_print=args.debug_group_counts,
     )
     print_gate_node_groups(gates)
     display_gate_groups(gates)
@@ -2940,11 +3323,13 @@ if __name__ == "__main__":
             gates, max_pebbles=gate_limit, net=net,
             num_steps=args.toggle_num_steps,
             max_escalations=args.max_escalations,
+            timeout_s=args.timeout_s,
         )
     else:
         gate_steps = pebble_gates(
             gates, max_pebbles=gate_limit, max_steps=None, net=net,
             max_escalations=args.max_escalations,
+            timeout_s=args.timeout_s,
         )
 
     print("\n" + "=" * 60)

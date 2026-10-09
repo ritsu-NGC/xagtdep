@@ -50,6 +50,71 @@ Examples:
         --caterpillar-bin build/blif_to_tcount \
         --caterpillar-only
 
+    # Run all EPFL benchmarks EXCEPT ones known to break the
+    # blif_to_tcount shim's 0-fanin (.names constant) BLIF parser,
+    # and bound OUR OWN pipeline's search to 120s/circuit:
+    python run_caterpillar_experiments.py \
+        --epfl-benchmarks all \
+        --exclude-benchmarks square ctrl i2c mem_ctrl router \
+        --caterpillar-bin build/blif_to_tcount \
+        --pipeline-timeout 120
+
+======================================================================
+PIPELINE TIMEOUT (--pipeline-timeout)
+======================================================================
+Pass --pipeline-timeout <seconds> to bound OUR OWN pipeline's
+Z3-based pebbling search (`pebbling_solver.pebble_gates`) to an
+overall wall-clock budget, mirroring how --timeout already bounds the
+EXTERNAL caterpillar subprocess (see `run_caterpillar`). This is
+threaded straight through to `pebble_gates`'s own `timeout_s`
+parameter (see pebbling_solver.py's module docstring, "OVERALL
+WALL-CLOCK TIMEOUT").
+
+If the budget is exceeded, `pebble_gates` raises
+`pebbling_solver.PebbleTimeoutError` (a `RuntimeError` subclass).
+`run_our_pipeline` catches this SPECIFICALLY (before the generic
+`Exception` catch-all) and reports it distinctly: `our_error` is
+prefixed with `"TIMEOUT: "`, so it is easy to grep/filter timeout rows
+out of a batch's results separately from genuine solver failures
+(e.g. gate-dependency assertion errors) or UNSAT/escalation-exhausted
+outcomes.
+
+If --pipeline-timeout is omitted (the default), no overall time limit
+is imposed on our own pipeline -- behavior is unchanged from before
+this flag was added (only pebble_gates's own
+max_escalations/max_pebbles_cap/max_steps bound the search, as
+previously). Ignored entirely in --caterpillar-only mode, since our
+pipeline never runs in that mode.
+
+======================================================================
+EXCLUDING BENCHMARKS (--exclude-benchmarks)
+======================================================================
+Pass --exclude-benchmarks <name> [<name> ...] to drop one or more
+benchmark names from the FINAL requested EPFL benchmark list, AFTER
+`--epfl-benchmarks` (including `all`) has already been expanded. This
+is useful for:
+  - Skipping circuits known to trip up `blif_to_tcount.cpp`'s BLIF
+    reader (e.g. circuits with 0-fanin/constant `.names` outputs,
+    which it currently rejects with "only supports 1- or 2-input
+    .names blocks").
+  - Skipping circuits known to be extremely slow/time out (e.g. `hyp`,
+    `div`) when you only want a quick pass over the rest of the suite.
+  - Temporarily dropping a benchmark whose BLIF file is missing or
+    corrupted, without having to manually retype the remaining 18
+    names via --epfl-benchmarks.
+
+Matching is by exact benchmark NAME (e.g. "hyp", not "hyp.blif" or a
+path), case-sensitive, matching the same names accepted by
+--epfl-benchmarks. Names in --exclude-benchmarks that don't match
+anything in the requested set are silently ignored (not an error) --
+this keeps a shared exclude-list usable across runs with different
+--epfl-benchmarks selections without needing to edit it each time.
+
+If --exclude-benchmarks causes a previously-populated EPFL benchmark
+request to become empty AND no --kinds were requested either, this is
+treated the same as not requesting any input set at all, and the
+script exits with a usage error (same as today's existing check).
+
 ======================================================================
 CATERPILLAR-ONLY MODE (--caterpillar-only)
 ======================================================================
@@ -80,6 +145,7 @@ In this mode:
   - `--caterpillar-bin` is still required in this mode (there is
     nothing else to run); omitting it produces the same per-row
     "No --caterpillar-bin provided; skipped." error as in normal mode.
+  - --pipeline-timeout is ignored entirely (our pipeline never runs).
 
 ======================================================================
 DIAGNOSTICS (--debug)
@@ -226,6 +292,7 @@ from pebbling_solver import (
     expand_gate_schedule,
     read_blif,
     select_gadget_rule,
+    PebbleTimeoutError,
 )
 from reed_muller_priority_cuts import random_reed_muller_priority_cut_dag
 from gate_schedule_to_circuit import build_circuit_from_node_schedule
@@ -462,7 +529,7 @@ def print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps):
 # ---------------------------------------------------------------------------
 
 def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label="",
-                      dump_json_path=None, dump_tikz_path=None):
+                      dump_json_path=None, dump_tikz_path=None, timeout_s=None):
     """
     Runs build_gate_groups -> pebble_gates -> expand_gate_schedule ->
     build_circuit_from_node_schedule on `net`, and returns:
@@ -490,6 +557,17 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
     visualization export; failures here are reported but do not affect
     the returned T-count/qubit results.
 
+    `timeout_s`: forwarded directly to `pebbling_solver.pebble_gates`'s
+    own `timeout_s` parameter -- an overall wall-clock budget for OUR
+    OWN Z3-based pebbling search, mirroring `run_caterpillar`'s
+    `timeout` for the external caterpillar subprocess. See module
+    docstring, "PIPELINE TIMEOUT (--pipeline-timeout)". If the budget
+    is exceeded, `pebble_gates` raises `pebbling_solver.
+    PebbleTimeoutError`, which is caught HERE specifically (before the
+    generic `Exception` catch-all) and reported with `our_error`
+    prefixed `"TIMEOUT: "`, distinguishing it from other solver
+    failures or UNSAT/escalation-exhausted outcomes.
+
     `max_pebbles` (if omitted) is auto-sized to `2 * len(net.pos)` and is
     ALSO passed as a hard `max_pebbles_cap` to `pebble_gates`, so
     `pebble_gates`'s own auto-escalation loop cannot run away toward
@@ -507,6 +585,7 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
             gates, max_pebbles=max_pebbles, max_steps=max_steps, net=net,
             verbose=False, max_pebbles_cap=max_pebbles,
             dump_json=dump_json_path,
+            timeout_s=timeout_s,
         )
         node_steps = expand_gate_schedule(gates, gate_steps)
 
@@ -521,6 +600,14 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
                       f"{type(e).__name__}: {e}")
 
         circuit_result = build_circuit_from_node_schedule(net, node_steps)
+    except PebbleTimeoutError as e:
+        # See module docstring, "PIPELINE TIMEOUT (--pipeline-timeout)" --
+        # reported distinctly from other solver failures below.
+        return {
+            "ok": False, "t_count": None, "qubit_count": None,
+            "num_ops": None, "elapsed_s": time.time() - start,
+            "error": f"TIMEOUT: {e}",
+        }
     except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
         return {
             "ok": False, "t_count": None, "qubit_count": None,
@@ -611,6 +698,25 @@ def expand_epfl_benchmark_names(names):
         return requested
     return names
 
+
+def apply_benchmark_exclusions(requested, exclude_names):
+    """
+    Removes every name in `exclude_names` from `requested`, preserving
+    the relative order of whatever remains. See module docstring,
+    "EXCLUDING BENCHMARKS (--exclude-benchmarks)".
+
+    Matching is by exact name (case-sensitive), same as the names
+    accepted by --epfl-benchmarks. Names in `exclude_names` that don't
+    appear in `requested` are silently ignored -- this keeps a shared
+    exclude-list reusable across runs with different --epfl-benchmarks
+    selections without needing per-run edits.
+    """
+    if not exclude_names:
+        return requested
+    exclude_set = set(exclude_names)
+    return [name for name in requested if name not in exclude_set]
+
+
 def generate_dags(num_dags, num_pis, num_gates, num_outputs, seed_base, kind):
     """
     Yields (label, PebblingNetwork) pairs.
@@ -662,6 +768,16 @@ def main():
                          "or 'all' for all 19."
     )
     parser.add_argument(
+        "--exclude-benchmarks", nargs="+", default=None,
+        help="EPFL benchmark names to EXCLUDE from the final requested "
+             "list, applied AFTER --epfl-benchmarks (including 'all') is "
+             "expanded. Useful for skipping circuits known to break the "
+             "blif_to_tcount shim's BLIF reader (e.g. circuits with "
+             "0-fanin/constant .names outputs) or known to be extremely "
+             "slow. Unmatched names are silently ignored. See module "
+             "docstring, 'EXCLUDING BENCHMARKS (--exclude-benchmarks)'."
+    )
+    parser.add_argument(
                     "--epfl-blif-dir", default=default_epfl_blif_dir(),
                     help="Root directory containing arithmetic/ and random_control/ "
                          "EPFL BLIF subdirectories (relative paths are resolved from "
@@ -706,6 +822,16 @@ def main():
     parser.add_argument("--timeout", type=float, default=120.0,
                          help="Per-DAG timeout (seconds) for the "
                               "caterpillar subprocess.")
+    parser.add_argument(
+        "--pipeline-timeout", type=float, default=None,
+        help="Overall wall-clock timeout (seconds) for OUR OWN "
+             "pipeline's Z3-based pebbling search (pebble_gates), "
+             "mirroring --timeout for the external caterpillar "
+             "subprocess. If omitted, no overall time limit is imposed "
+             "on our own pipeline. Ignored entirely in "
+             "--caterpillar-only mode. See module docstring, 'PIPELINE "
+             "TIMEOUT (--pipeline-timeout)'."
+    )
     parser.add_argument("--keep-blif", action="store_true",
                          help="Don't delete the temp dir with generated "
                               ".blif files after the run.")
@@ -751,9 +877,17 @@ def main():
 
     requested_kinds = args.kinds or []
     requested_epfl = expand_epfl_benchmark_names(args.epfl_benchmarks)
+
+    excluded_requested = []
+    if args.exclude_benchmarks:
+        before_exclusion = set(requested_epfl)
+        requested_epfl = apply_benchmark_exclusions(requested_epfl, args.exclude_benchmarks)
+        excluded_requested = sorted(before_exclusion - set(requested_epfl))
+
     if not requested_kinds and not requested_epfl:
         parser.error("must request at least one input set via --kinds and/or "
-                     "--epfl-benchmarks")
+                     "--epfl-benchmarks (after applying --exclude-benchmarks, "
+                     "if any)")
     epfl_blif_dir = resolve_epfl_blif_dir(args.epfl_blif_dir)
 
     out_dir = args.out_dir
@@ -785,12 +919,20 @@ def main():
         return os.path.join(dump_tikz_dir, f"{label}_network.tex")
 
     print(f"BLIF files will be written to: {out_dir}")
+    if excluded_requested:
+        print(f"Excluded {len(excluded_requested)} EPFL benchmark(s) via "
+              f"--exclude-benchmarks: {', '.join(excluded_requested)}")
     if args.caterpillar_only:
         print("CATERPILLAR-ONLY MODE: our pipeline (build_gate_groups/"
               "pebble_gates/gadget synthesis) will NOT be run for any DAG "
               "in this batch -- only the caterpillar shim's own runtime "
               "will be measured. See module docstring, 'CATERPILLAR-ONLY "
               "MODE (--caterpillar-only)'.")
+    elif args.pipeline_timeout is not None:
+        print(f"Our pipeline's Z3-based pebbling search is bounded to "
+              f"{args.pipeline_timeout}s wall-clock per DAG "
+              f"(--pipeline-timeout). See module docstring, 'PIPELINE "
+              f"TIMEOUT (--pipeline-timeout)'.")
     if dump_json_enabled:
         print(f"Pebbling debug JSON files will be written to: {dump_json_dir} "
               f"(pass --no-dump-pebbling-json to disable)")
@@ -837,6 +979,7 @@ def main():
                     net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
                     dump_json_path=_dump_json_path_for(label),
                     dump_tikz_path=_dump_tikz_path_for(label),
+                    timeout_s=args.pipeline_timeout,
                 )
             cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
@@ -912,6 +1055,7 @@ def main():
                 net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
                 dump_json_path=_dump_json_path_for(label),
                 dump_tikz_path=_dump_tikz_path_for(label),
+                timeout_s=args.pipeline_timeout,
             )
         cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
@@ -946,7 +1090,8 @@ def main():
 
     for r in rows:
         ours_t = str(r.get("our_t_count")) if r.get("our_t_count") is not None else (
-            "SKIP" if args.caterpillar_only else "ERR"
+            "SKIP" if args.caterpillar_only else
+            ("TMOUT" if (r.get("our_error") or "").startswith("TIMEOUT: ") else "ERR")
         )
         ours_q = str(r.get("our_qubits", "")) if r.get("our_qubits") is not None else "-"
         cat_t = str(r.get("cat_t_count")) if r.get("cat_t_count") is not None else "N/A"
@@ -982,6 +1127,16 @@ def main():
             r for r in rows
             if r.get("our_t_count") is not None and r.get("cat_t_count") is not None
         ]
+        timed_out = [
+            r for r in rows
+            if (r.get("our_error") or "").startswith("TIMEOUT: ")
+        ]
+        if timed_out:
+            print("\n" + "-" * 110)
+            print(f"NOTE: {len(timed_out)} row(s) hit --pipeline-timeout "
+                  f"({args.pipeline_timeout}s) before our pipeline found a "
+                  f"schedule: "
+                  f"{', '.join(r['label'] for r in timed_out)}")
         if valid:
             print("\n" + "-" * 110)
             print("SUMMARY (only rows with both T-counts available)")
