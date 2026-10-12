@@ -64,12 +64,26 @@ target_include_directories(QCVerificationCommonObj PRIVATE
     ${CMAKE_SOURCE_DIR}/src/QC
 )
 target_link_libraries(QCVerificationCommonObj PRIVATE caterpillar mockturtle)
+# blif_to_tcount and blif_optimize share test/blif_common.hpp so the two
+# shims never diverge on BLIF parsing.
 add_executable(blif_to_tcount blif_to_tcount.cpp)
 target_link_libraries(blif_to_tcount caterpillar mockturtle)
 target_include_directories(blif_to_tcount PRIVATE
     ${CMAKE_BINARY_DIR}/_deps/caterpillar-src/lib/lorina/lorina/include
+    ${CMAKE_SOURCE_DIR}/test
 )
+target_sources(blif_to_tcount PRIVATE blif_common.hpp)
 set_target_properties(blif_to_tcount PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+add_executable(blif_optimize blif_optimize.cpp)
+target_link_libraries(blif_optimize caterpillar mockturtle)
+target_include_directories(blif_optimize PRIVATE
+    ${CMAKE_BINARY_DIR}/_deps/caterpillar-src/lib/lorina/lorina/include
+    ${CMAKE_SOURCE_DIR}/test
+)
+target_sources(blif_optimize PRIVATE blif_common.hpp)
+set_target_properties(blif_optimize PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 # Verification test — generates random XAGs and exports JSON for Python verification
