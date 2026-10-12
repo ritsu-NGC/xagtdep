@@ -7,22 +7,11 @@ checked-in EPFL combinational benchmark BLIFs.
 ======================================================================
 IMPORTANT NOTE
 ======================================================================
-xagtdep does NOT expose a Python binding for caterpillar. Caterpillar
-is used exclusively from C++ (`caterpillar::logic_network_synthesis` +
-`xag_mapping_strategy`, plus `caterpillar::decompose_with_ands` to
-actually expand ANDs into their T-gate decomposition -- see
-test/blif_to_tcount.cpp).
-
-This harness shells out to a small companion C++ binary,
-`test/blif_to_tcount.cpp` (built as a CMake target in xagtdep), which:
-  1. parses a BLIF file with a hand-rolled reader,
-  2. builds a mockturtle::xag_network directly via create_and/create_xor,
-  3. runs `caterpillar::logic_network_synthesis` with
-     `xag_mapping_strategy`,
-  4. runs `caterpillar::decompose_with_ands` to expand each AND into
-     its actual Hadamard/T/CNOT synthesis sequence,
-  5. prints a single-line JSON object with gate/T-counts (including
-     "and_pos") to stdout.
+xagtdep does NOT expose a Python binding for caterpillar. This harness
+shells out to a small companion C++ binary, `test/blif_to_tcount.cpp`
+(built as a CMake target in xagtdep), which synthesizes a BLIF file via
+caterpillar and prints a single-line JSON object with gate/T-counts to
+stdout.
 
 Build once, from the xagtdep repo root:
 
@@ -31,248 +20,162 @@ Build once, from the xagtdep repo root:
 
 Then point this script at it with --caterpillar-bin build/blif_to_tcount.
 
-Examples:
-
-    python run_caterpillar_experiments.py \
-        --epfl-benchmarks all \
-        --caterpillar-bin build/blif_to_tcount
-
-    python run_caterpillar_experiments.py \
-        --epfl-benchmarks adder max sqrt \
-        --kinds random \
-        --num-dags 3 \
-        --caterpillar-bin build/blif_to_tcount
-
-    # Run ONLY caterpillar (skip our pipeline entirely) to time how
-    # long caterpillar alone takes on a large circuit, e.g. hyp.blif:
-    python run_caterpillar_experiments.py \
-        --epfl-benchmarks hyp \
-        --caterpillar-bin build/blif_to_tcount \
-        --caterpillar-only
-
-    # Run all EPFL benchmarks EXCEPT ones known to break the
-    # blif_to_tcount shim's 0-fanin (.names constant) BLIF parser,
-    # and bound OUR OWN pipeline's search to 120s/circuit:
-    python run_caterpillar_experiments.py \
-        --epfl-benchmarks all \
-        --exclude-benchmarks square ctrl i2c mem_ctrl router \
-        --caterpillar-bin build/blif_to_tcount \
-        --pipeline-timeout 120
-
-======================================================================
-PIPELINE TIMEOUT (--pipeline-timeout)
-======================================================================
-Pass --pipeline-timeout <seconds> to bound OUR OWN pipeline's
-Z3-based pebbling search (`pebbling_solver.pebble_gates`) to an
-overall wall-clock budget, mirroring how --timeout already bounds the
-EXTERNAL caterpillar subprocess (see `run_caterpillar`). This is
-threaded straight through to `pebble_gates`'s own `timeout_s`
-parameter (see pebbling_solver.py's module docstring, "OVERALL
-WALL-CLOCK TIMEOUT").
-
-If the budget is exceeded, `pebble_gates` raises
-`pebbling_solver.PebbleTimeoutError` (a `RuntimeError` subclass).
-`run_our_pipeline` catches this SPECIFICALLY (before the generic
-`Exception` catch-all) and reports it distinctly: `our_error` is
-prefixed with `"TIMEOUT: "`, so it is easy to grep/filter timeout rows
-out of a batch's results separately from genuine solver failures
-(e.g. gate-dependency assertion errors) or UNSAT/escalation-exhausted
-outcomes.
-
-If --pipeline-timeout is omitted (the default), no overall time limit
-is imposed on our own pipeline -- behavior is unchanged from before
-this flag was added (only pebble_gates's own
-max_escalations/max_pebbles_cap/max_steps bound the search, as
-previously). Ignored entirely in --caterpillar-only mode, since our
-pipeline never runs in that mode.
-
 ======================================================================
 EXCLUDING BENCHMARKS (--exclude-benchmarks)
 ======================================================================
 Pass --exclude-benchmarks <name> [<name> ...] to drop one or more
 benchmark names from the FINAL requested EPFL benchmark list, AFTER
-`--epfl-benchmarks` (including `all`) has already been expanded. This
-is useful for:
-  - Skipping circuits known to trip up `blif_to_tcount.cpp`'s BLIF
-    reader (e.g. circuits with 0-fanin/constant `.names` outputs,
-    which it currently rejects with "only supports 1- or 2-input
-    .names blocks").
-  - Skipping circuits known to be extremely slow/time out (e.g. `hyp`,
-    `div`) when you only want a quick pass over the rest of the suite.
-  - Temporarily dropping a benchmark whose BLIF file is missing or
-    corrupted, without having to manually retype the remaining 18
-    names via --epfl-benchmarks.
-
-Matching is by exact benchmark NAME (e.g. "hyp", not "hyp.blif" or a
-path), case-sensitive, matching the same names accepted by
---epfl-benchmarks. Names in --exclude-benchmarks that don't match
-anything in the requested set are silently ignored (not an error) --
-this keeps a shared exclude-list usable across runs with different
---epfl-benchmarks selections without needing to edit it each time.
-
-If --exclude-benchmarks causes a previously-populated EPFL benchmark
-request to become empty AND no --kinds were requested either, this is
-treated the same as not requesting any input set at all, and the
-script exits with a usage error (same as today's existing check).
+`--epfl-benchmarks` (including `all`) has already been expanded.
 
 ======================================================================
 CATERPILLAR-ONLY MODE (--caterpillar-only)
 ======================================================================
 Pass --caterpillar-only to skip `run_our_pipeline` ENTIRELY for every
 DAG in the batch -- only `run_caterpillar` (the C++ blif_to_tcount
-shim) is invoked. This is useful for isolating how long CATERPILLAR
-ALONE takes on a given circuit (e.g. a large EPFL benchmark like
-hyp.blif), without our own gate-grouping/Z3-pebbling/gadget-synthesis
-pipeline's time mixed in -- our pipeline's SAT-based search can be the
-dominant cost on large circuits (see pebbling_solver.py's module
-docstring), so isolating caterpillar's own runtime is often the first
-useful data point before deciding how to spend further optimization
-effort.
-
-In this mode:
-  - `our_t_count`, `our_qubits`, `our_elapsed_s`, `our_error` are all
-    reported as `None`/skipped in every row (no BLIF-export-failure
-    paths for "ours" apply either, since `write_blif` is still used to
-    produce the BLIF for synthetic DAGs, but `run_our_pipeline` is
-    simply never called).
-  - The RESULTS table still prints a `ours-T`/`ours-q` column (showing
-    "SKIP" for each), so the table shape stays identical to the normal
-    run, keeping any downstream parsing/diffing of this script's
-    output simple.
-  - The SUMMARY section is skipped entirely (it requires BOTH T-counts
-    to be present per row), and a one-line note explaining why is
-    printed instead.
-  - `--caterpillar-bin` is still required in this mode (there is
-    nothing else to run); omitting it produces the same per-row
-    "No --caterpillar-bin provided; skipped." error as in normal mode.
-  - --pipeline-timeout is ignored entirely (our pipeline never runs).
+shim) is invoked.
 
 ======================================================================
 DIAGNOSTICS (--debug)
 ======================================================================
 Pass --debug to print, for every DAG in the batch (ignored entirely in
---caterpillar-only mode, since our pipeline never runs):
-  - the gate-group partition: group id, node names, and each node's
-    resolved gadget rule (1-6) and its per-node T/Tdg cost.
-  - the gate-LEVEL schedule: how many times each group id was toggled
-    (compute_gate / uncompute_gate events), from `gate_steps` (the
-    output of `pebble_gates`, BEFORE `expand_gate_schedule` unpacks it
-    into individual nodes).
-  - the node-LEVEL compute counts after `expand_gate_schedule`: how
-    many times each individual node was actually computed/uncomputed,
-    which is what really drives the total T-count (since a group's
-    toggle event pays for EVERY node in that group at once -- see
-    `expand_gate_schedule` in pebbling_solver.py).
-
-This was added to answer: "why is ours-T so much higher than the raw
-gate count suggests?" -- the total T-count is NOT simply
-(num_gate_level_toggles) x (some fixed per-toggle cost), because (a)
-gadget rules cost different amounts, and (b) each gate-level toggle
-fires EVERY node in that group at once, and groups can vary in size.
-Only the actual instrumented counts below can tell you whether the
-blowup is from group size, recomputation, or both.
+--caterpillar-only mode):
+  - the chosen pebble budget and (if --use-tcount-search is passed)
+    every candidate pebble budget tried; or (by default) which
+    scheduling METHOD `pebble_gates_greedy_first` ended up using.
+  - the gate-group partition, gate-level toggle counts, and
+    node-level compute/uncompute counts.
 
 ======================================================================
-PEBBLING DEBUG JSON DUMP (on by default)
+SCHEDULING METHOD (run_our_pipeline): GREEDY-FIRST vs. T-COUNT SAT SEARCH
 ======================================================================
-Every DAG run through `run_our_pipeline` also dumps its solved
-gate-level schedule, its gate groups, and its expanded node-level
-pebbling sequence to a JSON file, via `pebbling_solver.pebble_gates`'s
-`dump_json` parameter (see pebbling_solver.py, `dump_pebbling_debug_json`).
-Skipped entirely in --caterpillar-only mode.
+`run_our_pipeline` defaults to `pebbling_solver.pebble_gates_
+greedy_first` for its scheduling step. By DEFAULT, if greedy
+scheduling DEADLOCKS (`solve_max_pebbles` smaller than some single
+group's own weight -- which should be impossible given `build_gate_
+groups`'s hard per-group weight ceiling, UNLESS the caller passes a
+`--solve-max-pebbles` smaller than `--grouping-max-pebbles`), the
+error PROPAGATES DIRECTLY as a row-level error -- it is NOT silently
+caught and retried via the expensive Z3-based `pebble_gates` fallback.
+Pass `--sat-fallback` to opt back into catching a greedy deadlock and
+falling back to the Z3-based search instead of erroring out.
 
-By default one file per DAG is written to `<out_dir>/<label>_pebbling_debug.json`
-(same directory as the generated/looked-up `.blif` file). Pass
---no-dump-pebbling-json to disable this, or --dump-json-dir to redirect
-the JSON files to a different directory than the BLIF output directory.
+Pass `--use-tcount-search` to opt back into the PREVIOUS default
+behavior entirely: `find_best_gate_pebbling_by_tcount`'s T-count-guided
+bidirectional Z3 search, using `_precise_t_count_fn` to evaluate every
+candidate pebble budget by actually synthesizing the real circuit.
+
+`--clean-pebbles`, `--sat-fallback`, `--force-sat` expose
+`pebble_gates_greedy_first`'s knobs through the CLI (ignored if
+`--use-tcount-search` is passed).
 
 ======================================================================
-TIKZ NETWORK DIAGRAM DUMP (on by default)
+GATE-GROUPING TOPOLOGICAL ORDER (--topo-order)
 ======================================================================
-Every DAG run through `run_our_pipeline` also dumps a plain TikZ
-diagram of the logic network's DAG (PIs, AND/XOR gates, POs, fanin
-edges), with each solved GateGroup drawn as a dashed colored bounding
-box around its member nodes -- see `tikz_network_export.py`. This is a
-VISUALIZATION-only export; it never affects solving, T-counts, or
-qubit allocation. Skipped entirely in --caterpillar-only mode.
+`build_gate_groups`'s Phase 1 greedy pebble-budget fill walks nodes in
+some topological order -- WHICH order affects which nodes end up
+adjacent, and therefore which nodes get grouped together. See
+pebbling_solver.py's module docstring, "TOPOLOGICAL ORDER CHOICE", for
+the three choices:
+  - "creation" (net.nodes as-is)
+  - "dependency_chain" (chains a producer directly to one of its own
+    consumers, DFS-style) -- this script's own default.
+  - "breadth_first" (keeps ALL siblings of a shared producer adjacent,
+    which can help the "SHARED-FANOUT-CONSUMER COST EXEMPTION" and
+    "SIBLING FANOUT MERGING" phases do less work, since Phase 1
+    already co-locates fanout siblings).
+`--topo-order` is forwarded directly to `build_gate_groups`. Ignored
+entirely in --caterpillar-only mode.
 
-By default one `.tex` file per DAG is written to
-`<out_dir>/<label>_network.tex` (same directory as --dump-json-dir /
-the BLIF output directory). Pass --no-dump-tikz to disable this, or
---dump-tikz-dir to redirect the .tex files elsewhere. Compile with
-`pdflatex <label>_network.tex` (requires the `tikz`
-arrows.meta/positioning/fit/backgrounds libraries, which are part of
-any standard TikZ install).
+======================================================================
+PEBBLE BUDGET (grouping budget vs. solve-probe budget, decoupled)
+======================================================================
+`build_gate_groups`'s own `max_pebbles` parameter and the scheduling
+step's `max_pebbles` are two DIFFERENT numbers, not the same value
+reused twice. `run_our_pipeline` auto-sizes TWO separate values when
+`--max-pebbles`/`--grouping-max-pebbles`/`--solve-max-pebbles` are
+omitted:
+  - `grouping_max_pebbles`: auto-sized to `max(1, len(net.pos) * 2)`.
+  - `solve_max_pebbles`: auto-sized to `grouping_max_pebbles * 2`, to
+    give the scheduler headroom for MULTIPLE groups to be
+    simultaneously live.
+
+IMPORTANT: since `build_gate_groups` now enforces a HARD per-group
+weight ceiling equal to `grouping_max_pebbles` (see pebbling_solver.py
+module docstring, "HARD PER-GROUP WEIGHT CEILING"), `solve_max_pebbles`
+must always be `>= grouping_max_pebbles` for the default greedy-first
+scheduling path to have any chance of succeeding -- the auto-sizing
+above already guarantees this (`solve_max_pebbles = 2x
+grouping_max_pebbles`), but passing a SMALLER `--solve-max-pebbles`
+than `--grouping-max-pebbles` explicitly will reliably deadlock (and,
+by default, raise immediately rather than silently falling back to
+Z3 -- see "SCHEDULING METHOD" above).
+
+======================================================================
+ERROR-PATH PEBBLING DEBUG JSON DUMP
+======================================================================
+Previously, if `run_our_pipeline`'s scheduling step RAISED (e.g. a
+greedy deadlock propagating through `pebble_gates_greedy_first` with
+its new default `use_sat_fallback=False` -- see "SCHEDULING METHOD"
+above -- or `build_gate_groups` itself raising `_validate_max_group_
+weight`'s defensive `AssertionError`), NO pebbling debug JSON was ever
+written for that DAG, even though `dump_json_path` was computed and
+even though `build_gate_groups` may have already succeeded and
+produced a full, inspectable set of gate groups. This made it hard to
+post-mortem exactly which gate groups/weights caused a deadlock,
+since the only artifact left behind was a one-line error string.
+
+`run_our_pipeline`'s `except Exception` handler now ALSO calls
+`pebbling_solver.dump_pebbling_debug_json` (when `dump_json_path` is
+set), writing out:
+  - `gate_groups`: the full set of gate groups, IF `build_gate_groups`
+    itself succeeded before the failure (None otherwise, e.g. if
+    `build_gate_groups` is what raised).
+  - `extra.outcome`: `"error"`.
+  - `extra.error`: the exact exception message.
+  - `extra.method_used`: whichever scheduling method had already been
+    selected at the point of failure (`None` if the failure occurred
+    before any scheduling path even started, e.g. inside
+    `build_gate_groups` itself).
+  - `extra.greedy_error`: the deadlock message from
+    `schedule_gates_greedy_pebble_limited`, if that specific function
+    is what raised (`None` otherwise, e.g. if the SAT path or
+    `build_circuit_from_node_schedule` is what failed instead).
+
+This error-path dump is wrapped in its own `try/except` so that a
+failure in the DEBUG DUMP ITSELF (e.g. a filesystem permission issue)
+can never mask the original pipeline error or crash the whole batch --
+it only prints a one-line warning and continues.
+
+NOTE: if the SAT-based paths (`find_best_gate_pebbling_by_tcount`,
+or `pebble_gates` via a greedy-fallback-then-SAT path) themselves
+already wrote a JSON dump internally (e.g. an UNSAT-exhausted or
+timeout outcome logged via their OWN `dump_json` parameter) before
+re-raising/returning an error that `run_our_pipeline` then catches,
+this OUTER error-path dump will simply OVERWRITE that file with the
+higher-level error summary instead -- the inner dump's `escalation_log`
+detail is not preserved in that specific overwrite case. This is an
+accepted tradeoff for keeping the error path simple; the inner dumps
+are still visible in the console log for that DAG even if the file on
+disk reflects only the final error state.
+
+======================================================================
+PEBBLING DEBUG JSON DUMP / TIKZ NETWORK DIAGRAM DUMP (on by default)
+======================================================================
+Every DAG run through `run_our_pipeline` dumps its solved gate-level
+schedule (on success, or whatever partial state exists on failure --
+see "ERROR-PATH PEBBLING DEBUG JSON DUMP" above) and a TikZ diagram of
+the network, unless disabled via --no-dump-pebbling-json /
+--no-dump-tikz.
 
 ======================================================================
 BLIF EXPORT
 ======================================================================
-`pebbling_solver.read_blif` already exists for READING BLIF; this file
-adds the missing WRITER (`write_blif`), producing a standard
-`.model`/`.inputs`/`.outputs`/`.names`/`.end` BLIF file with one
-`.names` block per non-PI node. Supports:
-  - 2-input AND nodes  -> cover "11 1"
-  - 2-input XOR nodes  -> cover "01 1" / "10 1"
-  - 1-input buffer/NOT nodes -> cover "1 1" (buffer) / "0 1" (NOT, when
-    is_xor is set on a single-fanin node)
-These conventions match `_is_xor_cover` in pebbling_solver.py on read.
-
-NOTE: the 1-input buffer-vs-NOT interpretation has NOT been verified
-against random_dag's actual generation logic -- check
-pebbling_solver.py's random_dag() if you need to confirm this before
-trusting T-counts on cases where 1-input nodes appear.
+`write_blif` is the companion writer to `pebbling_solver.read_blif`.
 
 ======================================================================
 CATERPILLAR "CORRECTED" T-COUNT ESTIMATE
 ======================================================================
-caterpillar's decompose_with_ands gives every internal AND's
-UNCOMPUTE step a "free" (0-T) pass whenever the exact same
-(control, control, target) triple was already computed earlier in the
-circuit. To estimate what the T-count WOULD be if every AND's
-uncompute cost the same as its compute, except output-driving ANDs
-(which need a full Toffoli, cost 7, instead of the relative-phase
-gadget, cost 4):
-
     corrected_t = 2 * t_count - and_pos
-
-where `and_pos` (reported directly by blif_to_tcount.cpp) is the
-number of primary outputs whose driving node is itself an AND gate.
-
-The "corrected" SUMMARY block reports two different aggregate views
-of ours-vs-corrected-caterpillar, and they answer different
-questions:
-  - "Ours / corrected-caterpillar ratio" divides the SUM of ours-T
-    across all valid rows by the SUM of corrected-caterpillar-T across
-    the same rows. This is dominated by whichever circuit(s) have the
-    largest absolute T-counts in the batch.
-  - "Average delta/corrected-cat ratio" instead computes, PER ROW,
-    (ours_t_count - corrected_t) / corrected_t, and then averages that
-    per-row ratio across all valid rows unweighted. This treats every
-    circuit equally regardless of its absolute size, so it's a better
-    read on "how does our overhead scale, on average, relative to
-    corrected caterpillar" without large circuits dominating the
-    aggregate the way the sum-of-sums ratio above does.
-
-Both SUMMARY sections are skipped entirely in --caterpillar-only mode
-(see above).
-
-======================================================================
-PEBBLE BUDGET (auto-sizing and hard cap)
-======================================================================
-When `--max-pebbles` is omitted, `run_our_pipeline` auto-sizes the
-initial gate-level pebble budget to `2 * len(net.pos)`. This value is
-ALSO used as a HARD CAP (`max_pebbles_cap`) passed to `pebble_gates`,
-so `pebble_gates`'s own auto-escalation logic (which otherwise retries
-with `current_pebbles + 1` on every UNSAT/step-exhaustion, up to
-`len(gates)` by default) can no longer run away indefinitely on large
-circuits. If a circuit genuinely needs more than `2 * num_pos` pebbles
-to admit a feasible schedule within the step cap, `pebble_gates` now
-raises a `RuntimeError` for that row instead of climbing towards
-`len(gates)` (which can be very large on e.g. the bigger EPFL
-benchmarks and cause multi-minute/hanging Z3 searches). Pass an
-explicit `--max-pebbles` to override this for circuits that need a
-larger budget. None of this applies in --caterpillar-only mode, since
-our pipeline never runs.
 """
 
 import argparse
@@ -288,12 +191,15 @@ from pebbling_solver import (
     PebblingNetwork,
     random_dag,
     build_gate_groups,
-    pebble_gates,
+    find_best_gate_pebbling_by_tcount,
+    pebble_gates_greedy_first,
     expand_gate_schedule,
     read_blif,
     select_gadget_rule,
-    PebbleTimeoutError,
+    dump_pebbling_debug_json,
+    print_po_lockin_diagnostics,
 )
+
 from reed_muller_priority_cuts import random_reed_muller_priority_cut_dag
 from gate_schedule_to_circuit import build_circuit_from_node_schedule
 from tikz_network_export import dump_tikz_network
@@ -304,12 +210,6 @@ from tikz_network_export import dump_tikz_network
 # ---------------------------------------------------------------------------
 
 def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
-    """
-    Writes `net` out as a standard combinational BLIF file.
-
-    Supports 2-input AND/XOR nodes and 1-input buffer/NOT nodes. Raises
-    `ValueError` if any non-PI node has a fanin count other than 1 or 2.
-    """
     for n in net.nodes:
         if n.is_pi:
             continue
@@ -332,9 +232,9 @@ def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
             a = n.fanins[0]
             lines.append(f".names {a.name} {n.name}")
             if n.is_xor:
-                lines.append("0 1")  # NOT: output=1 when input=0
+                lines.append("0 1")
             else:
-                lines.append("1 1")  # buffer: output=1 when input=1
+                lines.append("1 1")
         else:
             a, b = n.fanins
             lines.append(f".names {a.name} {b.name} {n.name}")
@@ -357,11 +257,6 @@ def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
 # ---------------------------------------------------------------------------
 
 def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
-    """
-    Runs `caterpillar_bin <blif_path>` and parses its single-line JSON
-    stdout. Returns a dict with t_count/cnot_count/qubits/and_pos/
-    corrected_t/elapsed_s/error/ok.
-    """
     if not caterpillar_bin:
         return {
             "ok": False, "t_count": None, "cnot_count": None, "qubits": None,
@@ -440,32 +335,33 @@ def run_caterpillar(caterpillar_bin, blif_path, timeout=120):
 
 
 # ---------------------------------------------------------------------------
-# Diagnostics: gate-group composition, gate-level toggles, node-level
-# compute counts. See module docstring, "DIAGNOSTICS (--debug)".
+# Diagnostics
 # ---------------------------------------------------------------------------
 
 _RULE_T_COST = {
     1: 4,
-    2: None,  # unresolved: still contains an undecomposed raw TOFFOLI
-              # placeholder in gate_schedule_to_circuit.py's
-              # _gadget_ops_rule2 -- true cost not yet consistently counted.
+    2: None,
     3: 6,
     4: 7,
-    5: 0,  # XOR
-    6: None,  # nested-fanout cascade: cost is a function of fanout count,
-              # not a fixed per-node constant; see gate_schedule_to_circuit.py.
+    5: 0,
+    6: None,
 }
 
 
+def _precise_t_count_fn(net, gates, gate_steps):
+    """
+    `t_count_fn` passed to `find_best_gate_pebbling_by_tcount` (only
+    used when `--use-tcount-search` is passed).
+    """
+    node_steps = expand_gate_schedule(gates, gate_steps)
+    circuit_result = build_circuit_from_node_schedule(net, node_steps)
+    return sum(
+        1 for (_node, _phase, op) in circuit_result.ops
+        if op.kind in ("T", "Tdg")
+    )
+
+
 def print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps):
-    """
-    Prints, for a single DAG:
-      - gate-group composition (nodes, resolved rule, per-node T cost)
-      - gate-level toggle counts (compute_gate/uncompute_gate per gid,
-        straight from `gate_steps` -- BEFORE node expansion)
-      - node-level compute/uncompute counts (AFTER `expand_gate_schedule`
-        unpacks groups into individual nodes)
-    """
     children = net.build_children()
 
     print(f"\n{'=' * 100}")
@@ -525,71 +421,113 @@ def print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps):
 
 
 # ---------------------------------------------------------------------------
-# Our own pipeline: gate groups -> pebbling -> circuit -> T-count
+# Our own pipeline: gate groups -> scheduling -> circuit -> T-count
 # ---------------------------------------------------------------------------
 
-def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label="",
-                      dump_json_path=None, dump_tikz_path=None, timeout_s=None):
+def run_our_pipeline(net, grouping_max_pebbles=None, solve_max_pebbles=None,
+                      max_steps="auto", debug=False, label="",
+                      dump_json_path=None, dump_tikz_path=None,
+                      use_tcount_search=False, clean_pebbles=None,
+                      use_sat_fallback=False, force_sat=False,
+                      topo_order="dependency_chain"):
     """
-    Runs build_gate_groups -> pebble_gates -> expand_gate_schedule ->
-    build_circuit_from_node_schedule on `net`, and returns:
-        {
-          "ok": bool,
-          "t_count": int or None,
-          "qubit_count": int or None,
-          "num_ops": int or None,
-          "elapsed_s": float,
-          "error": str or None,
-        }
+    Runs build_gate_groups -> [scheduling] -> expand_gate_schedule ->
+    build_circuit_from_node_schedule on `net`.
 
-    If `debug` is True, prints gate-group/toggle/node-event diagnostics
-    (see `print_pipeline_diagnostics`) before returning.
+    `topo_order` is forwarded directly to `build_gate_groups` -- see
+    module docstring, "GATE-GROUPING TOPOLOGICAL ORDER (--topo-order)",
+    and pebbling_solver.py's own module docstring, "TOPOLOGICAL ORDER
+    CHOICE", for the available choices ("creation",
+    "dependency_chain", "breadth_first").
 
-    If `dump_json_path` is provided, it is forwarded to
-    `pebbling_solver.pebble_gates`'s `dump_json` parameter, so the
-    solved gate-level schedule, gate groups, and expanded node-level
-    pebbling sequence for this DAG are written to that path as JSON.
+    `use_sat_fallback` (default False): if the default greedy-first
+    scheduling path DEADLOCKS, the error PROPAGATES DIRECTLY (caught
+    by this function's own try/except and reported as a row-level
+    `our_error`) rather than silently falling back to the Z3-based
+    search. Pass `use_sat_fallback=True` to restore the old fallback
+    behavior. See module docstring, "SCHEDULING METHOD".
 
-    If `dump_tikz_path` is provided, a plain TikZ diagram of `net`'s
-    DAG (with gate groups boxed) is written to that path via
-    `tikz_network_export.dump_tikz_network` -- see module docstring,
-    "TIKZ NETWORK DIAGRAM DUMP (on by default)". Purely a
-    visualization export; failures here are reported but do not affect
-    the returned T-count/qubit results.
-
-    `timeout_s`: forwarded directly to `pebbling_solver.pebble_gates`'s
-    own `timeout_s` parameter -- an overall wall-clock budget for OUR
-    OWN Z3-based pebbling search, mirroring `run_caterpillar`'s
-    `timeout` for the external caterpillar subprocess. See module
-    docstring, "PIPELINE TIMEOUT (--pipeline-timeout)". If the budget
-    is exceeded, `pebble_gates` raises `pebbling_solver.
-    PebbleTimeoutError`, which is caught HERE specifically (before the
-    generic `Exception` catch-all) and reported with `our_error`
-    prefixed `"TIMEOUT: "`, distinguishing it from other solver
-    failures or UNSAT/escalation-exhausted outcomes.
-
-    `max_pebbles` (if omitted) is auto-sized to `2 * len(net.pos)` and is
-    ALSO passed as a hard `max_pebbles_cap` to `pebble_gates`, so
-    `pebble_gates`'s own auto-escalation loop cannot run away toward
-    `len(gates)` on large circuits -- see module docstring, "PEBBLE
-    BUDGET".
+    If ANY step raises (build_gate_groups, the scheduling step, or
+    build_circuit_from_node_schedule), and `dump_json_path` is set, a
+    best-effort pebbling debug JSON is STILL written -- see module
+    docstring, "ERROR-PATH PEBBLING DEBUG JSON DUMP" -- containing
+    whatever gate groups were already built (if any), the error
+    message, and the scheduling method/greedy_error already known at
+    the point of failure.
     """
-    if max_pebbles is None:
-        # Cap the pebble budget at 2x the number of primary outputs.
-        max_pebbles = max(1, len(net.pos) * 2)
+    if grouping_max_pebbles is None:
+        grouping_max_pebbles = max(1, len(net.pos) * 2)
+
+    if solve_max_pebbles is None:
+        solve_max_pebbles = max(1, grouping_max_pebbles * 2)
 
     start = time.time()
+    print(f"[run_our_pipeline] starting: label={label!r} "
+          f"pis={len(net.pis)} pos={len(net.pos)} "
+          f"gates={len(net.nodes) - len(net.pis)} "
+          f"grouping_max_pebbles={grouping_max_pebbles} "
+          f"solve_max_pebbles(probe)={solve_max_pebbles} "
+          f"method={'tcount_sat_search' if use_tcount_search else 'greedy_first'} "
+          f"topo_order={topo_order!r}")
+
+    method_used = None
+    greedy_error = None
+    gates = None  # populated as soon as build_gate_groups succeeds, so the
+                  # except block below can still dump gate-group info even
+                  # if scheduling itself fails/raises.
+
     try:
-        gates = build_gate_groups(net, max_pebbles=max_pebbles)
-        gate_steps = pebble_gates(
-            gates, max_pebbles=max_pebbles, max_steps=max_steps, net=net,
-            verbose=False, max_pebbles_cap=max_pebbles,
-            dump_json=dump_json_path,
-            timeout_s=timeout_s,
-        )
+        gates = build_gate_groups(net, max_pebbles=grouping_max_pebbles,
+                                   topo_order=topo_order)
+
+        po_lockin_info = print_po_lockin_diagnostics(gates, net)
+        if po_lockin_info["total_po_clean_weight"] > solve_max_pebbles:
+            print(f"[run_our_pipeline] WARNING: solve_max_pebbles="
+                  f"{solve_max_pebbles} is already below the hard "
+                  f"PO clean-weight floor of "
+                  f"{po_lockin_info['total_po_clean_weight']} -- "
+                  f"scheduling WILL deadlock regardless of method or "
+                  f"topo_order; raise --solve-max-pebbles before "
+                  f"retrying.")
+            
+        if use_tcount_search:
+            search_result = find_best_gate_pebbling_by_tcount(
+                gates, max_pebbles=solve_max_pebbles, net=net,
+                t_count_fn=_precise_t_count_fn,
+                max_steps=max_steps, verbose=False,
+                dump_json=dump_json_path,
+            )
+            gate_steps = search_result["gate_steps"]
+            chosen_max_pebbles = search_result["max_pebbles"]
+            method_used = "tcount_sat_search"
+        else:
+            schedule_result = pebble_gates_greedy_first(
+                gates, max_pebbles=solve_max_pebbles, net=net,
+                clean_pebbles=clean_pebbles,
+                use_sat_fallback=use_sat_fallback,
+                force_sat=force_sat,
+                verbose=False,
+                max_steps=max_steps,
+                dump_json=dump_json_path,
+            )
+            gate_steps = schedule_result["gate_steps"]
+            chosen_max_pebbles = solve_max_pebbles
+            method_used = schedule_result["method"]
+            greedy_error = schedule_result["greedy_error"]
+
         node_steps = expand_gate_schedule(gates, gate_steps)
 
         if debug:
+            if use_tcount_search:
+                print(f"[debug] find_best_gate_pebbling_by_tcount chose "
+                      f"max_pebbles={chosen_max_pebbles} "
+                      f"(started from {solve_max_pebbles}; t_count="
+                      f"{search_result['t_count']}); attempts tried: "
+                      f"{search_result['tried']}")
+            else:
+                print(f"[debug] pebble_gates_greedy_first used method="
+                      f"{method_used!r} at max_pebbles={chosen_max_pebbles}"
+                      + (f" (greedy deadlock: {greedy_error})" if greedy_error else ""))
             print_pipeline_diagnostics(label, net, gates, gate_steps, node_steps)
 
         if dump_tikz_path:
@@ -600,19 +538,43 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
                       f"{type(e).__name__}: {e}")
 
         circuit_result = build_circuit_from_node_schedule(net, node_steps)
-    except PebbleTimeoutError as e:
-        # See module docstring, "PIPELINE TIMEOUT (--pipeline-timeout)" --
-        # reported distinctly from other solver failures below.
-        return {
-            "ok": False, "t_count": None, "qubit_count": None,
-            "num_ops": None, "elapsed_s": time.time() - start,
-            "error": f"TIMEOUT: {e}",
-        }
     except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
+        error_str = f"{type(e).__name__}: {e}"
+
+        # Dump whatever partial pebbling-debug info we have, even on
+        # failure -- e.g. a greedy deadlock (schedule_gates_greedy_
+        # pebble_limited's RuntimeError) now propagates straight through
+        # pebble_gates_greedy_first (default use_sat_fallback=False)
+        # WITHOUT ever calling dump_pebbling_debug_json itself. Without
+        # this, such a failure left NO debug JSON on disk at all, making
+        # it hard to inspect which gate groups/weights caused the
+        # deadlock. We still dump gate_groups (if build_gate_groups
+        # itself succeeded) and the error message/method_used, even
+        # though no gate_steps/node_steps exist in this case. See module
+        # docstring, "ERROR-PATH PEBBLING DEBUG JSON DUMP".
+        if dump_json_path:
+            try:
+                dump_pebbling_debug_json(
+                    dump_json_path,
+                    gate_groups=gates,
+                    extra={
+                        "outcome": "error",
+                        "error": error_str,
+                        "method_used": method_used,
+                        "greedy_error": greedy_error,
+                    },
+                )
+            except Exception as dump_e:  # noqa: BLE001 -- never let the debug dump itself crash the batch
+                print(f"    [pebbling debug json] failed to dump error "
+                      f"state for {label}: {type(dump_e).__name__}: {dump_e}")
+
         return {
             "ok": False, "t_count": None, "qubit_count": None,
-            "num_ops": None, "elapsed_s": time.time() - start,
-            "error": f"{type(e).__name__}: {e}",
+            "num_ops": None, "max_pebbles": None,
+            "grouping_max_pebbles": grouping_max_pebbles,
+            "method": method_used, "greedy_error": greedy_error,
+            "elapsed_s": time.time() - start,
+            "error": error_str,
         }
 
     t_count = sum(
@@ -625,22 +587,25 @@ def run_our_pipeline(net, max_pebbles=None, max_steps="auto", debug=False, label
         "t_count": t_count,
         "qubit_count": circuit_result.qubit_count,
         "num_ops": len(circuit_result.ops),
+        "max_pebbles": chosen_max_pebbles,
+        "grouping_max_pebbles": grouping_max_pebbles,
+        "method": method_used,
+        "greedy_error": greedy_error,
         "elapsed_s": time.time() - start,
         "error": None,
     }
 
 
 def _skipped_ours_result():
-    """
-    Placeholder "ours" result used in --caterpillar-only mode, so
-    every row still has the same shape as a normal run (our_t_count,
-    our_qubits, our_elapsed_s, our_error all present, just inert).
-    """
     return {
         "ok": False,
         "t_count": None,
         "qubit_count": None,
         "num_ops": None,
+        "max_pebbles": None,
+        "grouping_max_pebbles": None,
+        "method": None,
+        "greedy_error": None,
         "elapsed_s": None,
         "error": "skipped (--caterpillar-only passed)",
     }
@@ -700,17 +665,6 @@ def expand_epfl_benchmark_names(names):
 
 
 def apply_benchmark_exclusions(requested, exclude_names):
-    """
-    Removes every name in `exclude_names` from `requested`, preserving
-    the relative order of whatever remains. See module docstring,
-    "EXCLUDING BENCHMARKS (--exclude-benchmarks)".
-
-    Matching is by exact name (case-sensitive), same as the names
-    accepted by --epfl-benchmarks. Names in `exclude_names` that don't
-    appear in `requested` are silently ignored -- this keeps a shared
-    exclude-list reusable across runs with different --epfl-benchmarks
-    selections without needing per-run edits.
-    """
     if not exclude_names:
         return requested
     exclude_set = set(exclude_names)
@@ -718,15 +672,6 @@ def apply_benchmark_exclusions(requested, exclude_names):
 
 
 def generate_dags(num_dags, num_pis, num_gates, num_outputs, seed_base, kind):
-    """
-    Yields (label, PebblingNetwork) pairs.
-
-    `kind`:
-      - "random"      : random_dag (arbitrary random AND/XOR DAG)
-      - "reed_muller" : random_reed_muller_priority_cut_dag (ANF
-                        decomposition of a random n-PI/m-PO Boolean bit
-                        mapping, with priority-cut node sharing)
-    """
     for i in range(num_dags):
         seed = seed_base + i
         if kind == "random":
@@ -771,17 +716,12 @@ def main():
         "--exclude-benchmarks", nargs="+", default=None,
         help="EPFL benchmark names to EXCLUDE from the final requested "
              "list, applied AFTER --epfl-benchmarks (including 'all') is "
-             "expanded. Useful for skipping circuits known to break the "
-             "blif_to_tcount shim's BLIF reader (e.g. circuits with "
-             "0-fanin/constant .names outputs) or known to be extremely "
-             "slow. Unmatched names are silently ignored. See module "
-             "docstring, 'EXCLUDING BENCHMARKS (--exclude-benchmarks)'."
+             "expanded."
     )
     parser.add_argument(
                     "--epfl-blif-dir", default=default_epfl_blif_dir(),
                     help="Root directory containing arithmetic/ and random_control/ "
-                         "EPFL BLIF subdirectories (relative paths are resolved from "
-                         "this script's directory)."
+                         "EPFL BLIF subdirectories."
     )
     parser.add_argument("--num-pis", type=int, default=4)
     parser.add_argument("--num-gates", type=int, default=8,
@@ -791,12 +731,61 @@ def main():
     parser.add_argument("--seed-base", type=int, default=1000)
     parser.add_argument(
         "--max-pebbles", type=int, default=None,
-        help="Pebble budget for OUR pipeline. If omitted, auto-sized to "
-             "2x the number of primary outputs; this value is ALSO used "
-             "as a HARD CAP on pebble_gates's internal auto-escalation "
-             "(pebble_gates will raise instead of escalating past this "
-             "value). Pass explicitly to allow a larger budget for "
-             "circuits that need it. Ignored entirely in "
+        help="CONVENIENCE ALIAS: sets BOTH --grouping-max-pebbles and "
+             "--solve-max-pebbles to this same value. Ignored for either "
+             "one that is ALSO given explicitly."
+    )
+    parser.add_argument(
+        "--grouping-max-pebbles", type=int, default=None,
+        help="HARD per-group weight ceiling passed to build_gate_groups. "
+             "If omitted (and --max-pebbles is also omitted), auto-sized "
+             "to 2x the number of primary outputs."
+    )
+    parser.add_argument(
+        "--solve-max-pebbles", type=int, default=None,
+        help="Pebble budget passed to OUR pipeline's scheduling step. "
+             "MUST be >= --grouping-max-pebbles for the default "
+             "greedy-first scheduling path to have any chance of "
+             "succeeding (see module docstring, 'PEBBLE BUDGET'). If "
+             "omitted (and --max-pebbles is also omitted), auto-sized to "
+             "2x the resolved --grouping-max-pebbles value."
+    )
+    parser.add_argument(
+        "--use-tcount-search", action="store_true",
+        help="Use the T-count-guided find_best_gate_pebbling_by_tcount "
+             "bidirectional Z3 search for OUR pipeline's scheduling step "
+             "(the PREVIOUS default), instead of the new default "
+             "pebble_gates_greedy_first."
+    )
+    parser.add_argument(
+        "--clean-pebbles", type=int, default=None,
+        help="Optional narrower cap on sustained CLEAN (boundary-output) "
+             "weight, used by the greedy scheduler in the default "
+             "pebble_gates_greedy_first path. Ignored if "
+             "--use-tcount-search is passed."
+    )
+    parser.add_argument(
+        "--sat-fallback", action="store_true",
+        help="If greedy scheduling deadlocks (the default "
+             "pebble_gates_greedy_first path), fall back to the Z3-based "
+             "pebble_gates search instead of raising immediately (the "
+             "new default). Ignored if --use-tcount-search is passed."
+    )
+    parser.add_argument(
+        "--force-sat", action="store_true",
+        help="Skip greedy scheduling entirely and go straight to the "
+             "Z3-based pebble_gates search. Ignored if "
+             "--use-tcount-search is passed."
+    )
+    parser.add_argument(
+        "--topo-order", choices=["creation", "dependency_chain", "breadth_first"],
+        default="dependency_chain",
+        help="Topological order build_gate_groups's Phase 1 greedy "
+             "pebble-budget fill uses. 'breadth_first' keeps all "
+             "siblings of a shared fanout producer adjacent, which can "
+             "reduce how much work the sibling-fanout-merge phase has "
+             "to do -- see module docstring, 'GATE-GROUPING "
+             "TOPOLOGICAL ORDER (--topo-order)'. Ignored in "
              "--caterpillar-only mode."
     )
     parser.add_argument("--out-dir", default=None,
@@ -804,76 +793,56 @@ def main():
                               "(default: a fresh temp dir).")
     parser.add_argument(
         "--caterpillar-bin", default=None,
-        help="Path to the built test/blif_to_tcount shim. If omitted, "
-             "caterpillar comparisons are skipped (or, in "
-             "--caterpillar-only mode, the entire run does nothing "
-             "useful -- a per-row error will be reported instead)."
+        help="Path to the built test/blif_to_tcount shim."
     )
     parser.add_argument(
         "--caterpillar-only", action="store_true",
-        help="Skip OUR pipeline (build_gate_groups/pebble_gates/gadget "
-             "synthesis) entirely for every DAG in the batch -- only run "
-             "the caterpillar shim. Useful for isolating how long "
-             "caterpillar ALONE takes on a given circuit (e.g. a large "
-             "EPFL benchmark), without our own Z3-based pebbling "
-             "search's time mixed in. See module docstring, "
-             "'CATERPILLAR-ONLY MODE (--caterpillar-only)'."
+        help="Skip OUR pipeline entirely for every DAG in the batch -- "
+             "only run the caterpillar shim."
     )
     parser.add_argument("--timeout", type=float, default=120.0,
                          help="Per-DAG timeout (seconds) for the "
                               "caterpillar subprocess.")
-    parser.add_argument(
-        "--pipeline-timeout", type=float, default=None,
-        help="Overall wall-clock timeout (seconds) for OUR OWN "
-             "pipeline's Z3-based pebbling search (pebble_gates), "
-             "mirroring --timeout for the external caterpillar "
-             "subprocess. If omitted, no overall time limit is imposed "
-             "on our own pipeline. Ignored entirely in "
-             "--caterpillar-only mode. See module docstring, 'PIPELINE "
-             "TIMEOUT (--pipeline-timeout)'."
-    )
     parser.add_argument("--keep-blif", action="store_true",
                          help="Don't delete the temp dir with generated "
                               ".blif files after the run.")
     parser.add_argument(
         "--debug", action="store_true",
-        help="Print gate-group composition, gate-level toggle counts, and "
-             "node-level compute/uncompute counts for OUR pipeline, per "
-             "DAG. Use this to see exactly why ours-T is what it is -- "
-             "see module docstring, 'DIAGNOSTICS (--debug)'. Ignored "
-             "entirely in --caterpillar-only mode."
+        help="Print scheduling diagnostics, gate-group composition, "
+             "gate-level toggle counts, and node-level compute/uncompute "
+             "counts for OUR pipeline, per DAG."
     )
     parser.add_argument(
         "--dump-json-dir", default=None,
-        help="Directory to write per-DAG pebbling debug JSON files into "
-             "(one file per DAG: <label>_pebbling_debug.json). Defaults "
-             "to the same directory as the generated/looked-up .blif "
-             "files (--out-dir). Ignored if --no-dump-pebbling-json is "
-             "passed, or in --caterpillar-only mode."
+        help="Directory to write per-DAG pebbling debug JSON files into."
     )
     parser.add_argument(
         "--no-dump-pebbling-json", action="store_true",
-        help="Disable the default per-DAG pebbling debug JSON dump (gate "
-             "groups + gate-level schedule + expanded node-level "
-             "pebbling sequence). See module docstring, 'PEBBLING DEBUG "
-             "JSON DUMP (on by default)'."
+        help="Disable the default per-DAG pebbling debug JSON dump "
+             "(including the error-path dump -- see module docstring, "
+             "'ERROR-PATH PEBBLING DEBUG JSON DUMP')."
     )
     parser.add_argument(
         "--dump-tikz-dir", default=None,
-        help="Directory to write per-DAG TikZ network diagrams into "
-             "(one file per DAG: <label>_network.tex). Defaults to the "
-             "same directory as the generated/looked-up .blif files "
-             "(--out-dir). Ignored if --no-dump-tikz is passed, or in "
-             "--caterpillar-only mode. See module docstring, 'TIKZ "
-             "NETWORK DIAGRAM DUMP (on by default)'."
+        help="Directory to write per-DAG TikZ network diagrams into."
     )
     parser.add_argument(
         "--no-dump-tikz", action="store_true",
-        help="Disable the default per-DAG TikZ network diagram dump "
-             "(logic-network DAG with gate groups boxed). See module "
-             "docstring, 'TIKZ NETWORK DIAGRAM DUMP (on by default)'."
+        help="Disable the default per-DAG TikZ network diagram dump."
     )
     args = parser.parse_args()
+
+    if args.max_pebbles is not None:
+        if args.grouping_max_pebbles is None:
+            args.grouping_max_pebbles = args.max_pebbles
+        if args.solve_max_pebbles is None:
+            args.solve_max_pebbles = args.max_pebbles
+
+    if args.use_tcount_search and (
+            args.clean_pebbles is not None or args.sat_fallback or args.force_sat):
+        parser.error("--clean-pebbles/--sat-fallback/--force-sat only "
+                      "apply to the default greedy-first scheduling path, "
+                      "not --use-tcount-search.")
 
     requested_kinds = args.kinds or []
     requested_epfl = expand_epfl_benchmark_names(args.epfl_benchmarks)
@@ -923,35 +892,51 @@ def main():
         print(f"Excluded {len(excluded_requested)} EPFL benchmark(s) via "
               f"--exclude-benchmarks: {', '.join(excluded_requested)}")
     if args.caterpillar_only:
-        print("CATERPILLAR-ONLY MODE: our pipeline (build_gate_groups/"
-              "pebble_gates/gadget synthesis) will NOT be run for any DAG "
-              "in this batch -- only the caterpillar shim's own runtime "
-              "will be measured. See module docstring, 'CATERPILLAR-ONLY "
-              "MODE (--caterpillar-only)'.")
-    elif args.pipeline_timeout is not None:
-        print(f"Our pipeline's Z3-based pebbling search is bounded to "
-              f"{args.pipeline_timeout}s wall-clock per DAG "
-              f"(--pipeline-timeout). See module docstring, 'PIPELINE "
-              f"TIMEOUT (--pipeline-timeout)'.")
+        print("CATERPILLAR-ONLY MODE: our pipeline will NOT be run for any "
+              "DAG in this batch.")
+    else:
+        print(f"Scheduling method: "
+              f"{'--use-tcount-search (T-count-guided Z3 search)' if args.use_tcount_search else 'greedy-first (default; deadlock RAISES unless --sat-fallback is passed)'}")
+        print(f"Pebble budgets: --grouping-max-pebbles="
+              f"{args.grouping_max_pebbles if args.grouping_max_pebbles is not None else '(auto: 2x #POs)'}"
+              f", --solve-max-pebbles="
+              f"{args.solve_max_pebbles if args.solve_max_pebbles is not None else '(auto: 2x grouping budget)'}")
+        print(f"Gate-grouping topo order: {args.topo_order!r} "
+              f"(see module docstring, 'GATE-GROUPING TOPOLOGICAL "
+              f"ORDER (--topo-order)')")
     if dump_json_enabled:
         print(f"Pebbling debug JSON files will be written to: {dump_json_dir} "
-              f"(pass --no-dump-pebbling-json to disable)")
+              f"(including a best-effort dump on scheduling/build failures -- "
+              f"see module docstring, 'ERROR-PATH PEBBLING DEBUG JSON DUMP')")
     elif not args.caterpillar_only:
         print("Pebbling debug JSON dump disabled (--no-dump-pebbling-json).")
     if dump_tikz_enabled:
-        print(f"TikZ network diagrams will be written to: {dump_tikz_dir} "
-              f"(pass --no-dump-tikz to disable; compile with pdflatex)")
+        print(f"TikZ network diagrams will be written to: {dump_tikz_dir}")
     elif not args.caterpillar_only:
         print("TikZ network diagram dump disabled (--no-dump-tikz).")
     if not args.caterpillar_bin:
         print("NOTE: --caterpillar-bin not provided; caterpillar T-counts "
               "will be skipped" +
               (", and --caterpillar-only has nothing to run." if args.caterpillar_only
-               else ", only our own pipeline's T-count is reported.\n"
-                    "Build test/blif_to_tcount.cpp first, then pass its "
-                    "path here."))
+               else ", only our own pipeline's T-count is reported."))
 
     rows = []
+
+    def _run_ours(net, label):
+        if args.caterpillar_only:
+            return _skipped_ours_result()
+        return run_our_pipeline(
+            net, grouping_max_pebbles=args.grouping_max_pebbles,
+            solve_max_pebbles=args.solve_max_pebbles,
+            debug=args.debug, label=label,
+            dump_json_path=_dump_json_path_for(label),
+            dump_tikz_path=_dump_tikz_path_for(label),
+            use_tcount_search=args.use_tcount_search,
+            clean_pebbles=args.clean_pebbles,
+            use_sat_fallback=args.sat_fallback,
+            force_sat=args.force_sat,
+            topo_order=args.topo_order,
+        )
 
     for kind in requested_kinds:
         for label, net in generate_dags(
@@ -967,20 +952,14 @@ def main():
                     "num_pis": len(net.pis), "num_pos": len(net.pos),
                     "num_gates": len(net.nodes) - len(net.pis),
                     "our_t_count": None, "our_error": f"BLIF export failed: {e}",
+                    "our_max_pebbles": None, "our_grouping_max_pebbles": None,
+                    "our_method": None,
                     "cat_t_count": None, "cat_and_pos": None,
                     "cat_corrected_t": None, "cat_error": None,
                 })
                 continue
 
-            if args.caterpillar_only:
-                our = _skipped_ours_result()
-            else:
-                our = run_our_pipeline(
-                    net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
-                    dump_json_path=_dump_json_path_for(label),
-                    dump_tikz_path=_dump_tikz_path_for(label),
-                    timeout_s=args.pipeline_timeout,
-                )
+            our = _run_ours(net, label)
             cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
             rows.append({
@@ -991,6 +970,9 @@ def main():
                 "num_gates": len(net.nodes) - len(net.pis),
                 "our_t_count": our["t_count"],
                 "our_qubits": our["qubit_count"],
+                "our_max_pebbles": our["max_pebbles"],
+                "our_grouping_max_pebbles": our["grouping_max_pebbles"],
+                "our_method": our["method"],
                 "our_elapsed_s": our["elapsed_s"],
                 "our_error": our["error"],
                 "cat_t_count": cat["t_count"],
@@ -1012,6 +994,9 @@ def main():
                 "num_gates": 0,
                 "our_t_count": None,
                 "our_qubits": None,
+                "our_max_pebbles": None,
+                "our_grouping_max_pebbles": None,
+                "our_method": None,
                 "our_elapsed_s": None,
                 "our_error": (
                     f"BLIF export failed: EPFL benchmark '{label}' not found under "
@@ -1037,6 +1022,9 @@ def main():
                 "num_gates": 0,
                 "our_t_count": None,
                 "our_qubits": None,
+                "our_max_pebbles": None,
+                "our_grouping_max_pebbles": None,
+                "our_method": None,
                 "our_elapsed_s": None,
                 "our_error": f"BLIF export failed: {type(e).__name__}: {e}",
                 "cat_t_count": None,
@@ -1048,15 +1036,7 @@ def main():
             })
             continue
 
-        if args.caterpillar_only:
-            our = _skipped_ours_result()
-        else:
-            our = run_our_pipeline(
-                net, max_pebbles=args.max_pebbles, debug=args.debug, label=label,
-                dump_json_path=_dump_json_path_for(label),
-                dump_tikz_path=_dump_tikz_path_for(label),
-                timeout_s=args.pipeline_timeout,
-            )
+        our = _run_ours(net, label)
         cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
 
         rows.append({
@@ -1067,6 +1047,9 @@ def main():
             "num_gates": len(net.nodes) - len(net.pis),
             "our_t_count": our["t_count"],
             "our_qubits": our["qubit_count"],
+            "our_max_pebbles": our["max_pebbles"],
+            "our_grouping_max_pebbles": our["grouping_max_pebbles"],
+            "our_method": our["method"],
             "our_elapsed_s": our["elapsed_s"],
             "our_error": our["error"],
             "cat_t_count": cat["t_count"],
@@ -1077,12 +1060,13 @@ def main():
             "cat_error": cat["error"],
         })
 
-    print("\n" + "=" * 110)
+    print("\n" + "=" * 126)
     print("RESULTS")
-    print("=" * 110)
+    print("=" * 126)
     header = (
         f"{'label':32s} {'kind':12s} {'pis':>4s} {'pos':>4s} {'gates':>6s} "
-        f"{'ours-T':>7s} {'ours-q':>7s} {'cat-T':>6s} {'cat-q':>6s} "
+        f"{'ours-T':>7s} {'ours-q':>7s} {'ours-p':>7s} {'grp-p':>6s} {'method':>8s} "
+        f"{'cat-T':>6s} {'cat-q':>6s} "
         f"{'and_pos':>8s} {'corr-T':>7s} {'cat-s':>8s}"
     )
     print(header)
@@ -1090,10 +1074,12 @@ def main():
 
     for r in rows:
         ours_t = str(r.get("our_t_count")) if r.get("our_t_count") is not None else (
-            "SKIP" if args.caterpillar_only else
-            ("TMOUT" if (r.get("our_error") or "").startswith("TIMEOUT: ") else "ERR")
+            "SKIP" if args.caterpillar_only else "ERR"
         )
         ours_q = str(r.get("our_qubits", "")) if r.get("our_qubits") is not None else "-"
+        ours_p = str(r.get("our_max_pebbles", "")) if r.get("our_max_pebbles") is not None else "-"
+        grp_p = str(r.get("our_grouping_max_pebbles", "")) if r.get("our_grouping_max_pebbles") is not None else "-"
+        method = r.get("our_method") or "-"
         cat_t = str(r.get("cat_t_count")) if r.get("cat_t_count") is not None else "N/A"
         cat_q = str(r.get("cat_qubits")) if r.get("cat_qubits") is not None else "N/A"
         and_pos = str(r.get("cat_and_pos")) if r.get("cat_and_pos") is not None else "N/A"
@@ -1104,7 +1090,8 @@ def main():
         print(
             f"{r['label']:32s} {r['kind']:12s} {r['num_pis']:>4d} "
             f"{r['num_pos']:>4d} {r['num_gates']:>6d} "
-            f"{ours_t:>7s} {ours_q:>7s} {cat_t:>6s} {cat_q:>6s} "
+            f"{ours_t:>7s} {ours_q:>7s} {ours_p:>7s} {grp_p:>6s} {method:>8s} "
+            f"{cat_t:>6s} {cat_q:>6s} "
             f"{and_pos:>8s} {corr_t:>7s} {cat_s:>8s}"
         )
         if r.get("our_error") and not args.caterpillar_only:
@@ -1113,7 +1100,7 @@ def main():
             print(f"    [caterpillar] {r['cat_error']}")
 
     if args.caterpillar_only:
-        print("\n" + "-" * 110)
+        print("\n" + "-" * 126)
         print("SUMMARY skipped: --caterpillar-only was passed, so our "
               "pipeline's T-count was never computed for any row -- "
               "nothing to compare. See the 'cat-s' column above for "
@@ -1127,20 +1114,10 @@ def main():
             r for r in rows
             if r.get("our_t_count") is not None and r.get("cat_t_count") is not None
         ]
-        timed_out = [
-            r for r in rows
-            if (r.get("our_error") or "").startswith("TIMEOUT: ")
-        ]
-        if timed_out:
-            print("\n" + "-" * 110)
-            print(f"NOTE: {len(timed_out)} row(s) hit --pipeline-timeout "
-                  f"({args.pipeline_timeout}s) before our pipeline found a "
-                  f"schedule: "
-                  f"{', '.join(r['label'] for r in timed_out)}")
         if valid:
-            print("\n" + "-" * 110)
+            print("\n" + "-" * 126)
             print("SUMMARY (only rows with both T-counts available)")
-            print("-" * 110)
+            print("-" * 126)
             total_ours = sum(r["our_t_count"] for r in valid)
             total_cat = sum(r["cat_t_count"] for r in valid)
             print(f"DAGs compared:             {len(valid)}")
@@ -1148,17 +1125,21 @@ def main():
             print(f"Total caterpillar T-count: {total_cat}")
             if total_cat > 0:
                 print(f"Ours / caterpillar ratio:  {total_ours / total_cat:.3f}")
+            method_counts = Counter(r.get("our_method") for r in valid)
+            print(f"Scheduling methods used: "
+                  f"{dict(method_counts)}")
             for r in valid:
                 delta = r["our_t_count"] - r["cat_t_count"]
                 print(f"  {r['label']:32s} ours={r['our_t_count']:<6d} "
-                      f"caterpillar={r['cat_t_count']:<6d} delta={delta:+d}")
+                      f"caterpillar={r['cat_t_count']:<6d} delta={delta:+d} "
+                      f"method={r.get('our_method')}")
 
             valid_corrected = [r for r in valid if r.get("cat_corrected_t") is not None]
             if valid_corrected:
-                print("\n" + "-" * 110)
+                print("\n" + "-" * 126)
                 print("SUMMARY (corrected caterpillar T-count: "
                       "2*t_count - and_pos, see module docstring)")
-                print("-" * 110)
+                print("-" * 126)
                 total_corrected = sum(r["cat_corrected_t"] for r in valid_corrected)
                 print(f"Total corrected caterpillar T-count: {total_corrected}")
                 if total_corrected > 0:
@@ -1168,10 +1149,6 @@ def main():
                     print(f"Ours / corrected-caterpillar ratio:  "
                           f"{total_ours_corrected_set / total_corrected:.3f}")
 
-                # Per-row (delta / corrected_cat) ratio, averaged unweighted
-                # across all valid rows -- see module docstring,
-                # "CATERPILLAR 'CORRECTED' T-COUNT ESTIMATE", for how this
-                # differs from the sum-of-sums ratio above.
                 delta_ratios = [
                     (r["our_t_count"] - r["cat_corrected_t"]) / r["cat_corrected_t"]
                     for r in valid_corrected
