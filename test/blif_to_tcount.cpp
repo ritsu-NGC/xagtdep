@@ -128,210 +128,9 @@
 #include <caterpillar/details/utils.hpp>
 #include <tweedledum/networks/netlist.hpp>
 
+#include "blif_common.hpp"
+
 namespace {
-
-std::string jsonEscape(const std::string &s) {
-  std::string out;
-  for (char c : s) {
-    if (c == '"' || c == '\\')
-      out += '\\';
-    out += c;
-  }
-  return out;
-}
-
-std::vector<std::string> splitWs(const std::string &s) {
-  std::istringstream iss(s);
-  std::vector<std::string> tokens;
-  std::string tok;
-  while (iss >> tok)
-    tokens.push_back(tok);
-  return tokens;
-}
-
-std::string rstrip(std::string s) {
-  while (!s.empty() && (s.back() == '\n' || s.back() == '\r'))
-    s.pop_back();
-  return s;
-}
-
-// True for a canonical 2-input XOR/XNOR cover (matches
-// pebbling_solver._is_xor_cover exactly).
-bool isXorCover2(const std::vector<std::string> &rows) {
-  if (rows.size() != 2)
-    return false;
-  auto has = [&](const std::string &r) {
-    for (const auto &row : rows)
-      if (row == r)
-        return true;
-    return false;
-  };
-  bool xorPattern = has("01 1") && has("10 1");
-  bool xnorPattern = has("00 1") && has("11 1");
-  return xorPattern || xnorPattern;
-}
-
-// True for a canonical 1-input NOT cover (matches write_blif's
-// single-fanin convention: "0 1" == NOT, "1 1" == buffer).
-bool isNotCover1(const std::vector<std::string> &rows) {
-  if (rows.size() != 1)
-    return false;
-  return rows[0] == "0 1";
-}
-
-// Minimal, strict BLIF parser for the subset write_blif() emits: 1- or
-// 2-input .names blocks only, no latches/subckts/multi-output rows.
-// Throws std::runtime_error with a descriptive message on any
-// unsupported construct.
-mockturtle::xag_network parseBlif(const std::string &path) {
-  std::ifstream in(path);
-  if (!in.is_open())
-    throw std::runtime_error("could not open BLIF file: " + path);
-
-  mockturtle::xag_network xag;
-  std::unordered_map<std::string, mockturtle::xag_network::signal> signals;
-  std::vector<std::string> outputNames;
-
-  bool havePending = false;
-  std::vector<std::string> pendingFanins;
-  std::string pendingOutput;
-  std::vector<std::string> pendingRows;
-
-  auto getOrCreatePi = [&](const std::string &name) {
-    auto it = signals.find(name);
-    if (it != signals.end())
-      return it->second;
-    auto sig = xag.create_pi();
-    signals.emplace(name, sig);
-    return sig;
-  };
-
-  auto flushPending = [&]() {
-    if (!havePending)
-      return;
-
-    if (pendingFanins.size() == 1) {
-      auto aSig = getOrCreatePi(pendingFanins[0]);
-      mockturtle::xag_network::signal outSig;
-      if (isNotCover1(pendingRows)) {
-        // a XOR 1 == NOT a
-        outSig = xag.create_xor(aSig, xag.get_constant(true));
-      } else {
-        // buffer / identity: XAG has no dedicated buffer primitive, so
-        // model it as XOR with constant 0 (a ^ 0 == a), which costs
-        // nothing extra in the synthesized circuit.
-        outSig = xag.create_xor(aSig, xag.get_constant(false));
-      }
-      signals[pendingOutput] = outSig;
-    } else if (pendingFanins.size() == 2) {
-      auto aSig = getOrCreatePi(pendingFanins[0]);
-      auto bSig = getOrCreatePi(pendingFanins[1]);
-      mockturtle::xag_network::signal outSig;
-      if (isXorCover2(pendingRows)) {
-        outSig = xag.create_xor(aSig, bSig);
-      } else {
-        outSig = xag.create_and(aSig, bSig);
-      }
-      signals[pendingOutput] = outSig;
-    } else {
-      throw std::runtime_error(
-          "blif_to_tcount only supports 1- or 2-input .names blocks; "
-          "got " + std::to_string(pendingFanins.size()) +
-          " fanin(s) for output '" + pendingOutput + "'");
-    }
-
-    havePending = false;
-    pendingFanins.clear();
-    pendingOutput.clear();
-    pendingRows.clear();
-  };
-
-  std::string rawLine, buf;
-  std::vector<std::string> joinedLines;
-  while (std::getline(in, rawLine)) {
-    std::string line = rstrip(rawLine);
-    if (!line.empty() && line.back() == '\\') {
-      buf += line.substr(0, line.size() - 1) + " ";
-    } else {
-      buf += line;
-      joinedLines.push_back(buf);
-      buf.clear();
-    }
-  }
-  if (!buf.empty())
-    joinedLines.push_back(buf);
-
-  for (const auto &raw : joinedLines) {
-    std::string line = raw;
-    size_t start = line.find_first_not_of(" \t");
-    size_t end = line.find_last_not_of(" \t");
-    line = (start == std::string::npos) ? "" : line.substr(start, end - start + 1);
-
-    if (line.empty() || line[0] == '#')
-      continue;
-
-    if (line.rfind(".model", 0) == 0)
-      continue;
-
-    if (line.rfind(".inputs", 0) == 0) {
-      flushPending();
-      auto tokens = splitWs(line);
-      for (size_t i = 1; i < tokens.size(); ++i)
-        getOrCreatePi(tokens[i]);
-      continue;
-    }
-
-    if (line.rfind(".outputs", 0) == 0) {
-      flushPending();
-      auto tokens = splitWs(line);
-      for (size_t i = 1; i < tokens.size(); ++i)
-        outputNames.push_back(tokens[i]);
-      continue;
-    }
-
-    if (line.rfind(".names", 0) == 0) {
-      flushPending();
-      auto tokens = splitWs(line);
-      if (tokens.size() < 2)
-        continue;
-      pendingFanins.assign(tokens.begin() + 1, tokens.end() - 1);
-      pendingOutput = tokens.back();
-      for (const auto &f : pendingFanins)
-        if (signals.find(f) == signals.end())
-          getOrCreatePi(f);
-      havePending = true;
-      pendingRows.clear();
-      continue;
-    }
-
-    if (line.rfind(".latch", 0) == 0 || line.rfind(".gate", 0) == 0 ||
-        line.rfind(".subckt", 0) == 0) {
-      throw std::runtime_error(
-          "blif_to_tcount only supports combinational .names-based BLIF "
-          "files (found: '" + line + "')");
-    }
-
-    if (line.rfind(".end", 0) == 0) {
-      flushPending();
-      continue;
-    }
-
-    if (havePending)
-      pendingRows.push_back(line);
-  }
-
-  flushPending();
-
-  for (const auto &outName : outputNames) {
-    auto it = signals.find(outName);
-    if (it == signals.end())
-      throw std::runtime_error("output '" + outName +
-                                "' was never defined by a .names block");
-    xag.create_po(it->second);
-  }
-
-  return xag;
-}
 
 struct DecomposedCounts {
   uint32_t t_count = 0;
@@ -450,7 +249,7 @@ int main(int argc, char **argv) {
   std::string argError;
   auto maybeOpts = parseArgs(argc, argv, argError);
   if (!maybeOpts) {
-    std::cout << "{\"ok\":false,\"error\":\"" << jsonEscape(argError) << "\"}"
+    std::cout << "{\"ok\":false,\"error\":\"" << blif_common::jsonEscape(argError) << "\"}"
               << std::endl;
     return 2;
   }
@@ -469,9 +268,9 @@ int main(int argc, char **argv) {
 
   mockturtle::xag_network xag;
   try {
-    xag = parseBlif(opts.blif_path);
+    xag = blif_common::read_blif_as_xag(opts.blif_path);
   } catch (const std::exception &e) {
-    std::cout << "{\"ok\":false,\"error\":\"" << jsonEscape(e.what()) << "\"}"
+    std::cout << "{\"ok\":false,\"error\":\"" << blif_common::jsonEscape(e.what()) << "\"}"
               << std::endl;
     return 1;
   }
@@ -531,7 +330,7 @@ int main(int argc, char **argv) {
               << "}" << std::endl;
     return 0;
   } catch (const std::exception &e) {
-    std::cout << "{\"ok\":false,\"error\":\"" << jsonEscape(e.what()) << "\"}"
+    std::cout << "{\"ok\":false,\"error\":\"" << blif_common::jsonEscape(e.what()) << "\"}"
               << std::endl;
     return 1;
   }
