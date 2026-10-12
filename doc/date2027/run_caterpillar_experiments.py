@@ -176,6 +176,54 @@ BLIF EXPORT
 CATERPILLAR "CORRECTED" T-COUNT ESTIMATE
 ======================================================================
     corrected_t = 2 * t_count - and_pos
+
+======================================================================
+SYMMETRIC PRE-OPTIMIZATION MODE (--pre-optimize / --optimizer-bin)
+======================================================================
+Pass --pre-optimize <const_fanin|cut_rewriting|resub> together with
+--optimizer-bin <path/to/blif_optimize> to run ONE mockturtle XAG
+optimization pass (via the `test/blif_optimize.cpp` shim) on a
+benchmark's BLIF file ONCE, BEFORE it is fed into EITHER pipeline --
+the SAME resulting optimized BLIF path is then used for BOTH
+`run_our_pipeline` (via `read_blif`) AND `run_caterpillar` (via the
+`blif_to_tcount` shim). This keeps the T-count comparison symmetric:
+both pipelines see the identical (optimized) circuit, so any T-count
+delta reflects a genuine difference in SYNTHESIS strategy, not a
+difference in which circuit was measured.
+
+This is OFF by default (today's unoptimized comparison is unchanged
+unless you explicitly opt in). When enabled:
+  - `blif_optimize` is invoked ONCE per benchmark/DAG, producing a
+    temp optimized BLIF file under `out_dir` (named
+    "<label>.optimized.<pass>.blif").
+  - If `blif_optimize` fails for a given row (binary missing, BLIF
+    parse error, unsupported construct, timeout, etc.), that row is
+    recorded with `pre_optimize_error` set and BOTH `our_*`/`cat_*`
+    fields are skipped (None) for that row -- we deliberately do NOT
+    silently fall back to the unoptimized BLIF for just one row, since
+    that would silently break symmetry for that single row without
+    any visible signal in the results table.
+  - Every row's dict gains a `pre_optimize` field (the pass name, or
+    "none" when --pre-optimize is not passed) and
+    `pre_optimize_nodes_before` / `pre_optimize_nodes_after` /
+    `pre_optimize_and_before` / `pre_optimize_and_after` fields (all
+    None when --pre-optimize is not passed), so optimized and
+    unoptimized runs/rows are never silently conflated when reading a
+    results table or any saved CSV.
+  - `--pre-optimize` requires `--optimizer-bin` to also be given (and
+    vice versa); passing only one of the two is a usage error.
+
+Example:
+
+    python run_caterpillar_experiments.py --epfl-benchmarks bar \\
+        --caterpillar-bin build/blif_to_tcount \\
+        --optimizer-bin build/blif_optimize \\
+        --pre-optimize const_fanin
+
+NOTE: `cut_rewriting`/`resub` are more aggressive than `const_fanin`
+and may restructure node identities enough that other diagnostics
+(e.g. --debug's per-node rule/cost breakdown) are no longer directly
+comparable to an unoptimized baseline run for the same benchmark.
 """
 
 import argparse
@@ -250,6 +298,96 @@ def write_blif(net: PebblingNetwork, path, model_name="pebbling_dag"):
         f.write("\n".join(lines) + "\n")
 
     return path
+
+
+# ---------------------------------------------------------------------------
+# Symmetric pre-optimization via the blif_optimize shim
+# ---------------------------------------------------------------------------
+
+def run_blif_optimize(blif_path, optimizer_bin, pass_name, out_path, timeout=60):
+    """
+    Runs `optimizer_bin <blif_path> <out_path> --pass=<pass_name>` and
+    parses its single-line JSON stdout. Returns a dict with keys:
+    ok, out_path (None on failure), nodes_before, and_before, nodes_after,
+    and_after, elapsed_s, error.
+
+    The CALLER is responsible for using `out_path` (on success) for BOTH
+    `run_our_pipeline` (via `read_blif`) and `run_caterpillar` -- this is
+    what makes the comparison symmetric. See module docstring, "SYMMETRIC
+    PRE-OPTIMIZATION MODE".
+    """
+    if not optimizer_bin:
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": 0.0, "error": "No --optimizer-bin provided; skipped.",
+        }
+
+    if not os.path.isfile(optimizer_bin) or not os.access(optimizer_bin, os.X_OK):
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": 0.0,
+            "error": f"blif_optimize binary not found or not executable: "
+                     f"{optimizer_bin}. Build test/blif_optimize.cpp first "
+                     f"(cmake --build build --target blif_optimize).",
+        }
+
+    start = time.time()
+    try:
+        proc = subprocess.run(
+            [optimizer_bin, blif_path, out_path, f"--pass={pass_name}"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": time.time() - start,
+            "error": f"blif_optimize shim timed out after {timeout}s",
+        }
+    except OSError as e:
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": time.time() - start,
+            "error": f"failed to launch blif_optimize shim: {e}",
+        }
+
+    elapsed = time.time() - start
+    raw = (proc.stdout or "").strip()
+
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": elapsed,
+            "error": (
+                f"blif_optimize shim produced non-JSON stdout (exit "
+                f"{proc.returncode}): stdout={raw!r} stderr={proc.stderr!r}"
+            ),
+        }
+
+    if not payload.get("ok"):
+        return {
+            "ok": False, "out_path": None, "nodes_before": None,
+            "and_before": None, "nodes_after": None, "and_after": None,
+            "elapsed_s": elapsed,
+            "error": payload.get("error", "unknown error from blif_optimize shim"),
+        }
+
+    return {
+        "ok": True,
+        "out_path": out_path,
+        "nodes_before": payload.get("nodes_before"),
+        "and_before": payload.get("and_before"),
+        "nodes_after": payload.get("nodes_after"),
+        "and_after": payload.get("and_after"),
+        "elapsed_s": elapsed,
+        "error": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -611,6 +749,27 @@ def _skipped_ours_result():
     }
 
 
+def _skipped_pre_optimize_row_fields(pre_optimize_name):
+    """
+    Shared field set for a row that was skipped entirely because
+    --pre-optimize was requested but blif_optimize failed for this
+    specific benchmark/DAG. See module docstring, "SYMMETRIC
+    PRE-OPTIMIZATION MODE".
+    """
+    return {
+        "pre_optimize": pre_optimize_name,
+        "pre_optimize_nodes_before": None,
+        "pre_optimize_and_before": None,
+        "pre_optimize_nodes_after": None,
+        "pre_optimize_and_after": None,
+        "our_t_count": None, "our_qubits": None, "our_max_pebbles": None,
+        "our_grouping_max_pebbles": None, "our_method": None,
+        "our_elapsed_s": None,
+        "cat_t_count": None, "cat_qubits": None, "cat_and_pos": None,
+        "cat_corrected_t": None, "cat_elapsed_s": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # DAG generation for the experiment batch
 # ---------------------------------------------------------------------------
@@ -800,9 +959,30 @@ def main():
         help="Skip OUR pipeline entirely for every DAG in the batch -- "
              "only run the caterpillar shim."
     )
+    parser.add_argument(
+        "--pre-optimize", choices=["const_fanin", "cut_rewriting", "resub"],
+        default=None,
+        help="Run a mockturtle XAG optimization pass ONCE via the "
+             "blif_optimize shim before feeding the SAME resulting BLIF "
+             "into BOTH run_our_pipeline and run_caterpillar, for a "
+             "symmetric, apples-to-apples comparison on the optimized "
+             "circuit. Requires --optimizer-bin. Off by default (today's "
+             "unoptimized comparison). See module docstring, 'SYMMETRIC "
+             "PRE-OPTIMIZATION MODE'."
+    )
+    parser.add_argument(
+        "--optimizer-bin", default=None,
+        help="Path to the built test/blif_optimize shim. Required if "
+             "--pre-optimize is set."
+    )
     parser.add_argument("--timeout", type=float, default=120.0,
                          help="Per-DAG timeout (seconds) for the "
                               "caterpillar subprocess.")
+    parser.add_argument(
+        "--optimize-timeout", type=float, default=60.0,
+        help="Per-DAG timeout (seconds) for the blif_optimize subprocess. "
+             "Only used if --pre-optimize is passed."
+    )
     parser.add_argument("--keep-blif", action="store_true",
                          help="Don't delete the temp dir with generated "
                               ".blif files after the run.")
@@ -843,6 +1023,10 @@ def main():
         parser.error("--clean-pebbles/--sat-fallback/--force-sat only "
                       "apply to the default greedy-first scheduling path, "
                       "not --use-tcount-search.")
+
+    if bool(args.pre_optimize) != bool(args.optimizer_bin):
+        parser.error("--pre-optimize and --optimizer-bin must be given "
+                      "together (both or neither).")
 
     requested_kinds = args.kinds or []
     requested_epfl = expand_epfl_benchmark_names(args.epfl_benchmarks)
@@ -887,6 +1071,11 @@ def main():
             return None
         return os.path.join(dump_tikz_dir, f"{label}_network.tex")
 
+    pre_optimize_name = args.pre_optimize or "none"
+
+    def _optimized_blif_path_for(label):
+        return os.path.join(out_dir, f"{label}.optimized.{args.pre_optimize}.blif")
+
     print(f"BLIF files will be written to: {out_dir}")
     if excluded_requested:
         print(f"Excluded {len(excluded_requested)} EPFL benchmark(s) via "
@@ -904,6 +1093,11 @@ def main():
         print(f"Gate-grouping topo order: {args.topo_order!r} "
               f"(see module docstring, 'GATE-GROUPING TOPOLOGICAL "
               f"ORDER (--topo-order)')")
+    if args.pre_optimize:
+        print(f"PRE-OPTIMIZATION ENABLED: --pre-optimize={args.pre_optimize!r} "
+              f"via --optimizer-bin={args.optimizer_bin!r}. BOTH pipelines "
+              f"will be run on the SAME optimized BLIF per row -- see "
+              f"module docstring, 'SYMMETRIC PRE-OPTIMIZATION MODE'.")
     if dump_json_enabled:
         print(f"Pebbling debug JSON files will be written to: {dump_json_dir} "
               f"(including a best-effort dump on scheduling/build failures -- "
@@ -938,6 +1132,52 @@ def main():
             topo_order=args.topo_order,
         )
 
+    def _maybe_pre_optimize(label, blif_path):
+        """
+        If --pre-optimize is enabled, runs blif_optimize on `blif_path`
+        and returns (effective_blif_path, opt_info_fields, skip_row).
+        `skip_row` is a complete row dict (already filled with
+        _skipped_pre_optimize_row_fields-style None values) when
+        blif_optimize FAILS for this benchmark -- the caller should
+        append `skip_row` to `rows` and `continue` without running
+        either pipeline, to avoid silently breaking symmetry for this
+        one row. Returns (blif_path, {}, None) unchanged when
+        --pre-optimize is not enabled.
+        """
+        if not args.pre_optimize:
+            return blif_path, {
+                "pre_optimize": "none",
+                "pre_optimize_nodes_before": None,
+                "pre_optimize_and_before": None,
+                "pre_optimize_nodes_after": None,
+                "pre_optimize_and_after": None,
+            }, None
+
+        opt_out_path = _optimized_blif_path_for(label)
+        opt = run_blif_optimize(
+            blif_path, args.optimizer_bin, args.pre_optimize, opt_out_path,
+            timeout=args.optimize_timeout,
+        )
+        if not opt["ok"]:
+            skip_row = {
+                "label": label, "kind": "epfl",  # overwritten by caller if needed
+                "num_pis": 0, "num_pos": 0, "num_gates": 0,
+                "our_error": None,
+                "cat_error": f"pre-optimize skipped this row: {opt['error']}",
+            }
+            skip_row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+            skip_row["pre_optimize_error"] = opt["error"]
+            return None, {}, skip_row
+
+        opt_fields = {
+            "pre_optimize": pre_optimize_name,
+            "pre_optimize_nodes_before": opt["nodes_before"],
+            "pre_optimize_and_before": opt["and_before"],
+            "pre_optimize_nodes_after": opt["nodes_after"],
+            "pre_optimize_and_after": opt["and_after"],
+        }
+        return opt["out_path"], opt_fields, None
+
     for kind in requested_kinds:
         for label, net in generate_dags(
             args.num_dags, args.num_pis, args.num_gates, args.num_outputs,
@@ -947,7 +1187,7 @@ def main():
             try:
                 write_blif(net, blif_path, model_name=label)
             except ValueError as e:
-                rows.append({
+                row = {
                     "label": label, "kind": kind,
                     "num_pis": len(net.pis), "num_pos": len(net.pos),
                     "num_gates": len(net.nodes) - len(net.pis),
@@ -956,13 +1196,44 @@ def main():
                     "our_method": None,
                     "cat_t_count": None, "cat_and_pos": None,
                     "cat_corrected_t": None, "cat_error": None,
-                })
+                }
+                row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+                rows.append(row)
                 continue
 
-            our = _run_ours(net, label)
-            cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
+            effective_blif_path, opt_fields, skip_row = _maybe_pre_optimize(label, blif_path)
+            if skip_row is not None:
+                skip_row["kind"] = kind
+                skip_row["num_pis"] = len(net.pis)
+                skip_row["num_pos"] = len(net.pos)
+                skip_row["num_gates"] = len(net.nodes) - len(net.pis)
+                rows.append(skip_row)
+                continue
 
-            rows.append({
+            if args.pre_optimize:
+                # BOTH pipelines must now read the OPTIMIZED BLIF, not
+                # the original net/blif_path -- re-parse it via
+                # read_blif so "ours" sees the exact same optimized
+                # circuit caterpillar will.
+                try:
+                    net = read_blif(effective_blif_path)
+                except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
+                    row = {
+                        "label": label, "kind": kind,
+                        "num_pis": 0, "num_pos": 0, "num_gates": 0,
+                        "our_error": f"failed to re-parse optimized BLIF: "
+                                     f"{type(e).__name__}: {e}",
+                        "cat_error": None,
+                    }
+                    row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+                    row.update(opt_fields)
+                    rows.append(row)
+                    continue
+
+            our = _run_ours(net, label)
+            cat = run_caterpillar(args.caterpillar_bin, effective_blif_path, timeout=args.timeout)
+
+            row = {
                 "label": label,
                 "kind": kind,
                 "num_pis": len(net.pis),
@@ -981,12 +1252,14 @@ def main():
                 "cat_corrected_t": cat["corrected_t"],
                 "cat_elapsed_s": cat["elapsed_s"],
                 "cat_error": cat["error"],
-            })
+            }
+            row.update(opt_fields)
+            rows.append(row)
 
     for label in requested_epfl:
         blif_path = resolve_epfl_blif_path(epfl_blif_dir, label)
         if blif_path is None:
-            rows.append({
+            row = {
                 "label": label,
                 "kind": "epfl",
                 "num_pis": 0,
@@ -1008,13 +1281,15 @@ def main():
                 "cat_corrected_t": None,
                 "cat_elapsed_s": None,
                 "cat_error": None,
-            })
+            }
+            row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+            rows.append(row)
             continue
 
         try:
             net = read_blif(blif_path)
         except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
-            rows.append({
+            row = {
                 "label": label,
                 "kind": "epfl",
                 "num_pis": 0,
@@ -1033,13 +1308,40 @@ def main():
                 "cat_corrected_t": None,
                 "cat_elapsed_s": None,
                 "cat_error": None,
-            })
+            }
+            row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+            rows.append(row)
             continue
 
-        our = _run_ours(net, label)
-        cat = run_caterpillar(args.caterpillar_bin, blif_path, timeout=args.timeout)
+        effective_blif_path, opt_fields, skip_row = _maybe_pre_optimize(label, blif_path)
+        if skip_row is not None:
+            skip_row["kind"] = "epfl"
+            skip_row["num_pis"] = len(net.pis)
+            skip_row["num_pos"] = len(net.pos)
+            skip_row["num_gates"] = len(net.nodes) - len(net.pis)
+            rows.append(skip_row)
+            continue
 
-        rows.append({
+        if args.pre_optimize:
+            try:
+                net = read_blif(effective_blif_path)
+            except Exception as e:  # noqa: BLE001 -- report, don't crash the batch
+                row = {
+                    "label": label, "kind": "epfl",
+                    "num_pis": 0, "num_pos": 0, "num_gates": 0,
+                    "our_error": f"failed to re-parse optimized BLIF: "
+                                 f"{type(e).__name__}: {e}",
+                    "cat_error": None,
+                }
+                row.update(_skipped_pre_optimize_row_fields(pre_optimize_name))
+                row.update(opt_fields)
+                rows.append(row)
+                continue
+
+        our = _run_ours(net, label)
+        cat = run_caterpillar(args.caterpillar_bin, effective_blif_path, timeout=args.timeout)
+
+        row = {
             "label": label,
             "kind": "epfl",
             "num_pis": len(net.pis),
@@ -1058,10 +1360,12 @@ def main():
             "cat_corrected_t": cat["corrected_t"],
             "cat_elapsed_s": cat["elapsed_s"],
             "cat_error": cat["error"],
-        })
+        }
+        row.update(opt_fields)
+        rows.append(row)
 
     print("\n" + "=" * 126)
-    print("RESULTS")
+    print("RESULTS" + (f"  [pre-optimize={pre_optimize_name}]" if args.pre_optimize else ""))
     print("=" * 126)
     header = (
         f"{'label':32s} {'kind':12s} {'pis':>4s} {'pos':>4s} {'gates':>6s} "
@@ -1069,6 +1373,8 @@ def main():
         f"{'cat-T':>6s} {'cat-q':>6s} "
         f"{'and_pos':>8s} {'corr-T':>7s} {'cat-s':>8s}"
     )
+    if args.pre_optimize:
+        header += f" {'opt':>10s} {'nodes_b':>8s} {'nodes_a':>8s}"
     print(header)
     print("-" * len(header))
 
@@ -1087,17 +1393,25 @@ def main():
         cat_s = (
             f"{r.get('cat_elapsed_s'):.2f}" if r.get("cat_elapsed_s") is not None else "N/A"
         )
-        print(
+        line = (
             f"{r['label']:32s} {r['kind']:12s} {r['num_pis']:>4d} "
             f"{r['num_pos']:>4d} {r['num_gates']:>6d} "
             f"{ours_t:>7s} {ours_q:>7s} {ours_p:>7s} {grp_p:>6s} {method:>8s} "
             f"{cat_t:>6s} {cat_q:>6s} "
             f"{and_pos:>8s} {corr_t:>7s} {cat_s:>8s}"
         )
+        if args.pre_optimize:
+            opt_name = r.get("pre_optimize") or "-"
+            nodes_b = str(r.get("pre_optimize_nodes_before")) if r.get("pre_optimize_nodes_before") is not None else "-"
+            nodes_a = str(r.get("pre_optimize_nodes_after")) if r.get("pre_optimize_nodes_after") is not None else "-"
+            line += f" {opt_name:>10s} {nodes_b:>8s} {nodes_a:>8s}"
+        print(line)
         if r.get("our_error") and not args.caterpillar_only:
             print(f"    [ours error] {r['our_error']}")
         if r.get("cat_error"):
             print(f"    [caterpillar] {r['cat_error']}")
+        if r.get("pre_optimize_error"):
+            print(f"    [pre-optimize] {r['pre_optimize_error']}")
 
     if args.caterpillar_only:
         print("\n" + "-" * 126)
@@ -1116,7 +1430,8 @@ def main():
         ]
         if valid:
             print("\n" + "-" * 126)
-            print("SUMMARY (only rows with both T-counts available)")
+            print("SUMMARY (only rows with both T-counts available)"
+                  + (f"  [pre-optimize={pre_optimize_name}]" if args.pre_optimize else ""))
             print("-" * 126)
             total_ours = sum(r["our_t_count"] for r in valid)
             total_cat = sum(r["cat_t_count"] for r in valid)
@@ -1179,6 +1494,16 @@ def main():
         else:
             print("\nNo rows had both T-counts available -- nothing to summarize. "
                   "Pass --caterpillar-bin to enable the comparison.")
+
+    if args.pre_optimize:
+        skipped_opt = [r for r in rows if r.get("pre_optimize_error")]
+        if skipped_opt:
+            print("\n" + "-" * 126)
+            print(f"{len(skipped_opt)} row(s) SKIPPED entirely due to "
+                  f"blif_optimize failure (neither pipeline was run, to "
+                  f"avoid breaking symmetry for just that row):")
+            for r in skipped_opt:
+                print(f"  {r['label']:32s} {r['pre_optimize_error']}")
 
     if cleanup_dir:
         import shutil

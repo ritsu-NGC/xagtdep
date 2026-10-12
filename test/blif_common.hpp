@@ -61,11 +61,6 @@ inline bool isXorCover2(const std::vector<std::string> &rows) {
   return sorted_rows == xor_pattern || sorted_rows == xnor_pattern;
 }
 
-// True for a canonical 2-input AND cover: single row "11 1".
-inline bool isAndCover2(const std::vector<std::string> &rows) {
-  return rows.size() == 1 && rows[0] == "11 1";
-}
-
 // 1-input cover rows: "1 1" -> buffer (identity), "0 1" -> NOT (inverter).
 inline bool isBufferCover1(const std::vector<std::string> &rows) {
   return rows.size() == 1 && rows[0] == "1 1";
@@ -202,11 +197,21 @@ inline ParsedBlif read_blif_raw(const std::string &path) {
 }
 
 // Builds a mockturtle::xag_network from a ParsedBlif. Matches
-// pebbling_solver.read_blif()'s node classification: 2-input "11 1" -> AND,
-// 2-input XOR/XNOR cover -> XOR, 1-input "1 1"/"0 1" -> buffer/NOT. Buffer
-// and NOT are modeled via XOR with a constant (matching blif_to_tcount.cpp's
-// original parseBlif convention exactly: buffer == a ^ 0, NOT == a ^ 1 --
-// NOT via xag.create_not(a) would be semantically equivalent but must NOT
+// pebbling_solver.read_blif()'s node classification: 2-input XOR/XNOR
+// cover -> XOR, any OTHER 2-input cover -> AND (matching
+// blif_to_tcount.cpp's original parseBlif exactly: it treats ANY
+// non-XOR 2-input cover as AND, unconditionally -- it does NOT require
+// an exact "11 1" match. Do not "tighten" this to a strict AND-cover
+// check; pebbling_solver.write_blif only ever emits "11 1" for AND
+// nodes today, but some generated/edited BLIFs can have a differently
+// formatted-but-still-AND cover, and the original shim accepted those
+// via this exact fallback -- see the bar.blif regression this
+// comment is guarding against).
+//
+// 1-input "1 1"/"0 1" -> buffer/NOT. Buffer and NOT are modeled via XOR
+// with a constant (again matching blif_to_tcount.cpp's original
+// parseBlif convention exactly: buffer == a ^ 0, NOT == a ^ 1 -- NOT
+// via xag.create_not(a) would be semantically equivalent but must NOT
 // be used here, to keep both shims' XAG node identities byte-for-byte
 // consistent).
 inline mockturtle::xag_network build_xag_from_parsed(const ParsedBlif &parsed) {
@@ -234,31 +239,25 @@ inline mockturtle::xag_network build_xag_from_parsed(const ParsedBlif &parsed) {
     if (node.fanins.size() == 2) {
       auto a = name_to_signal.at(node.fanins[0]);
       auto b = name_to_signal.at(node.fanins[1]);
-      if (isAndCover2(node.rows)) {
-        result = xag.create_and(a, b);
-      } else if (isXorCover2(node.rows)) {
+      if (isXorCover2(node.rows)) {
         result = xag.create_xor(a, b);
       } else {
-        throw std::runtime_error(
-            "blif_common::build_xag_from_parsed: unsupported 2-input cover "
-            "for node " +
-            node.output);
+        // Matches blif_to_tcount.cpp's original parseBlif exactly: any
+        // non-XOR 2-input cover is treated as AND, unconditionally --
+        // no strict "11 1"-only check here (see comment above).
+        result = xag.create_and(a, b);
       }
     } else if (node.fanins.size() == 1) {
       auto a = name_to_signal.at(node.fanins[0]);
-      if (isBufferCover1(node.rows)) {
-        // Matches blif_to_tcount.cpp's original parseBlif exactly: XAG has
-        // no dedicated buffer primitive, so model buffer as a ^ 0.
-        result = xag.create_xor(a, xag.get_constant(false));
-      } else if (isNotCover1(node.rows)) {
-        // Matches blif_to_tcount.cpp's original parseBlif exactly: NOT is
-        // modeled as a ^ 1, not a dedicated create_not call.
+      if (isNotCover1(node.rows)) {
+        // Matches blif_to_tcount.cpp's original parseBlif exactly: NOT
+        // is modeled as a ^ 1, not a dedicated create_not call.
         result = xag.create_xor(a, xag.get_constant(true));
       } else {
-        throw std::runtime_error(
-            "blif_common::build_xag_from_parsed: unsupported 1-input cover "
-            "for node " +
-            node.output);
+        // Matches blif_to_tcount.cpp's original parseBlif exactly: any
+        // other 1-input cover (including, but not limited to, "1 1")
+        // is treated as a buffer, modeled as a ^ 0.
+        result = xag.create_xor(a, xag.get_constant(false));
       }
     } else {
       throw std::runtime_error(
