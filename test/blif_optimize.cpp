@@ -51,6 +51,7 @@
 //     error-reporting style and exit codes (0 on success, 1 on a caught
 //     exception, 2 on bad CLI args).
 
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -165,7 +166,12 @@ int main(int argc, char **argv) {
     size_t nodes_after = optimized.num_gates();
     size_t and_after = count_and_gates(optimized);
 
-    write_blif(optimized, args.out_path);
+    // The filename overload silently ignores open/write failures.
+    std::ofstream output;
+    output.exceptions(std::ios::failbit | std::ios::badbit);
+    output.open(args.out_path);
+    write_blif(optimized, output);
+    output.close();
 
     std::cout << "{\"ok\":true,\"pass\":\""
                << blif_common::jsonEscape(args.pass_name)

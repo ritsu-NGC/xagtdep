@@ -166,6 +166,19 @@ class BlifShimTests(unittest.TestCase):
             self.assertEqual(counter, optimizer)
             self.assertIn("unsupported 2-input cover", counter["error"])
 
+    def test_output_failures_are_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for output in (
+                pathlib.Path(directory),
+                pathlib.Path(directory) / "missing" / "out.blif",
+            ):
+                with self.subTest(output=output):
+                    summary = self.run_json(
+                        self.optimizer, FIXTURE, output, exit_code=1
+                    )
+                    self.assertFalse(summary["ok"])
+                    self.assertTrue(summary["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
