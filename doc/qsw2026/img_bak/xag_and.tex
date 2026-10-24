@@ -1,0 +1,20 @@
+\documentclass[tikz,border=8pt]{standalone}
+\usepackage{tikz}
+
+\begin{document}
+\begin{tikzpicture}[line cap=round, line join=round]
+  % Center node
+  \node[draw, circle, minimum size=18mm, inner sep=0pt] (sum) at (0,0) {$+$};
+
+  % Upward arrow and label F
+  \draw[->, line width=0.9pt] (sum.north) -- ++(0,1.2) node[above] {$F$};
+
+  % Two downward branches
+  \draw[line width=0.9pt] (sum.south west) -- ++(-1.2,-1.4);
+  \draw[line width=0.9pt] (sum.south east) -- ++( 1.2,-1.4);
+
+  % Labels A and B near the branch ends
+  \node at (-1.55,-1.85) {$A$};
+  \node at ( 1.55,-1.85) {$B$};
+\end{tikzpicture}
+\end{document}

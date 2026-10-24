@@ -1,0 +1,7 @@
+\Qcircuit @C=1em @R=1em {
+  \lstick{\ket{x_1}} & \qw               & \multigate{3}{U_F} & \qw           & \multigate{3}{U_F^{\dagger}} & \qw \\
+  \lstick{\ket{x_2}} & \qw               & \ghost{U_F}        & \qw           & \ghost{U_F^{\dagger}}        & \qw \\
+                     & \push{\vdots}     &                    & \push{\vdots} &                              & \push{\vdots} \\
+  \lstick{\ket{x_n}} & \qw               & \ghost{U_F}       & \qw            & \ghost{U_F^{\dagger}}        & \qw \\
+  \lstick{\ket{y}}   & \qw               & \targ\qwx[-1]     & \gate{Z}       & \targ\qwx[-1]                & \qw
+}

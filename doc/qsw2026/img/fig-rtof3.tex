@@ -1,0 +1,7 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+          \push{{x}_{0} } & \qw               & \qw                     & \qw      & \qw                      & \control{2}\qw\qwx[1] & \qw                & \qw      & \qw                       & \qw \\
+          \push{{x}_{1} } & \qw               & \qw                     & \qw      & \qw                      & \control{2}\qw\qwx[1] & \qw                & \qw      & \qw                       & \qw \\
+          \push{\vdots}   &                   &                         &          &                          & \push{\vdots}          &                    &          &                           & \push{\vdots} \\
+          \push{{x}_{n} } & \qw               & \qw                     & \ctrl{1} & \qw                      & \qw                   & \qw               & \ctrl{1}  & \qw                       & \qw \\
+          \push{{f}   }  & \gate{\mathrm{H}} & \gate{\mathrm{T^\dagger}} & \targ     & \gate{\mathrm{T^\dagger}} & \targ\qwx[-1]         & \gate{\mathrm{T}} & \targ     & \gate{\mathrm{T^{\dagger}}} & \gate{\mathrm{H}} \\
+}

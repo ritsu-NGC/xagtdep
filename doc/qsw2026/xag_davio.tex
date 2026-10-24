@@ -1,0 +1,53 @@
+\documentclass[tikz, border=5pt]{standalone}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, calc, positioning}
+
+\begin{document}
+
+\begin{tikzpicture}[
+    gate/.style={circle, draw, inner sep=2pt},
+    every node/.style={font=\scriptsize},
+    edgelabel/.style={font=\scriptsize, fill=white, inner sep=1pt},
+    >=Stealth
+]
+
+% Inputs
+\node (x1) at (0,0) {$F_{x_{k-1}=0}$};
+\node (x2) at (1.5,0) {$x_{k-1} \cdot F_{2_{x_{k-1}}}$};
+\node (xk) at (3.2,0) {$x_k$};
+
+% XOR(x1,x2)
+\node[gate] (xor12) at (0.6,0.8) {$+$};
+\draw (x1) -- (xor12)
+    node[edgelabel, pos=0.3, xshift=-10pt]{};
+\draw (x2) -- (xor12)
+    node[edgelabel, pos=0.3, xshift=16pt]{};
+
+
+% AND gate
+\node[gate] (and1) at (2.2,1.7) {$\wedge$};
+\draw (xk) -- (and1);
+%    node[edgelabel, pos=0.5, xshift=8pt]{$x_k$};
+
+% Top XOR
+\node[gate] (xorTop) at (2.2,2.6) {$+$};
+\draw (and1) -- (xorTop)
+    node[edgelabel, pos=0.5, xshift=20pt]{$x_k \cdot F_{2_{x_k}}$};
+
+% XOR with x3
+\node[gate] (xor23) at (0,1.7) {$+$};
+\draw (xor23) -- (xorTop)
+    node[edgelabel, pos=0.5, xshift=-15pt]{$F_{x_k = 0}$};
+    
+% Output arrow to F
+\node (F) at (2.2,3.4) {$F$};
+\draw[->] (xorTop) -- (F);
+
+% Dashed edge
+\draw (xor12) -- (and1)
+    node[edgelabel, pos=0.5, xshift=-8pt]{$F_{2_{x_k}};
+
+\end{tikzpicture}
+
+\end{document}

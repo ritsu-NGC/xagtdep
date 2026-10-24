@@ -1,0 +1,8 @@
+%\Qcircuit @C=0.5em @R=0.2em @!R { \\
+\Qcircuit @C=0.5em @R=0.2em { \\
+          \push{\ket{x_1}}  & \ctrl{3} & \qw      & \gate{X} & \ctrl{3} & \qw                   & \qw      & \qw      & \ctrl{3} & \gate{X}           & \qw         & \qw      & \qw      & \qw                & \ctrl{3} & \qw      & \qw      & \qw      & \qw                & \qw      &\qw  \\
+          \push{\ket{x_2}}  & \qw      & \qw      & \qw      & \qw      & \qw                   & \ctrl{2} & \qw      & \qw      & \qw                & \ctrl{2}    & \qw      & \qw      & \qw                & \qw      & \ctrl{2} & \qw      & \qw      & \qw                & \qw      &\qw  \\
+          \push{\ket{x_3}}  & \qw      & \qw      & \qw      & \qw      & \qw                   & \qw      & \qw      & \qw      & \qw                & \qw         & \qw      & \ctrl{1} & \qw                & \qw      & \qw      & \qw      & \ctrl{1} & \qw                & \qw      &\qw  \\
+          \push{{\ket{0}}}  & \targ    & \gate{H} & \gate{T} & \targ    & \gate{T^{\dagger}}    & \targ    & \gate{T} & \targ    & \gate{T^{\dagger}} & \targ       & \gate{T} & \targ    & \gate{T^{\dagger}} & \targ    & \targ    & \gate{T} & \targ    & \gate{T^{\dagger}} & \gate{H} &\qw  
+}
+%                            &          &          &           &          &                    &                    &           &           &                    &          &                             &                    & \ustick{x_3 \cdot F(x_3=1,x_2,x_1)}   &                    &                    &          &            &                    &           &          &          &                    &          &           &          &                    & \\

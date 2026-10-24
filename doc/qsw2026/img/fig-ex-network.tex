@@ -1,0 +1,69 @@
+% TikZ diagram for the given BLIF
+% - Oriented horizontally: inputs on the left, outputs on the right
+% - Each .names block is shown as a small LUT/AND/INV-style logic box
+% - Wires follow the BLIF net dependencies
+
+\begin{tikzpicture}[
+  x=1.35cm, y=0.9cm,
+  >=Latex,
+  wire/.style={-Latex, line width=0.5pt},
+  nodebox/.style={draw, rounded corners=2pt, align=center, inner sep=3pt, minimum height=8mm},
+  port/.style={draw, circle, inner sep=1.2pt},
+  lab/.style={font=\small}
+]
+
+% Inputs (left)
+\node[lab] (x0) at (0,  3) {$x_0$};
+\node[lab] (x1) at (0,  1.5) {$x_1$};
+\node[lab] (x2) at (0,  0) {$x_2$};
+\node[lab] (x3) at (0, -1.5) {$x_3$};
+\node[lab] (x4) at (0, -3) {$x_4$};
+
+% Internal logic nodes (placed left-to-right following dataflow)
+
+% .names x0 x1 new_n8   (truth table: 00 1)  => new_n8 = ~x0 & ~x1
+\node[nodebox] (n8) at (1, 2) {\scriptsize $i_0 =\bar{x_0}  \bar{x_1}$};
+
+% .names x2 new_n8 new_n9  (11 1) => new_n9 = x2 & new_n8
+\node[nodebox] (n9) at (2.5, 1) {\scriptsize $i_1 = x_2  i_0$};
+
+% .names x3 new_n9 po0  (01 1) => po0 = ~x3 & new_n9
+\node[nodebox] (po0box) at (4, 0) {\scriptsize $po_0 = \bar{x_3}  i_1$};
+
+% .names x2 new_n8 new_n11 (01 1) => new_n11 = ~x2 & new_n8
+\node[nodebox] (n11) at (2.5, -1) {\scriptsize $ i_2 = \bar{x_2}  i_0$};
+
+% .names x3 new_n11 new_n12 (11 1) => new_n12 = x3 & new_n11
+\node[nodebox] (n12) at (4, -2) {\scriptsize $i_3 = x_3  i_2$};
+
+% .names x4 new_n12 po1 (01 1) => po1 = ~x4 & new_n12
+\node[nodebox] (po1box) at (5.5, -3) {\scriptsize $po_1 = \bar{x_4}  i_3$};
+
+% Wires from inputs to logic
+\draw[wire] (x0.east) -- (n8.west);
+\draw[wire] (x1.east) -- (n8.west);
+
+\draw[wire] (x2.east) -- (n9.west);
+\draw[wire] (n8.east) -- (n9.west);
+
+\draw[wire, bend left=25] (x3.east) to (po0box.west);
+\draw[wire] (n9.east)  -- (po0box.west);
+
+\draw[wire] (x2.east) -- (n11.west);
+\draw[wire] (n8.east)  -- (n11.west);
+
+\draw[wire] (x3.east) -- (n12.west);
+\draw[wire] (n11.east) -- (n12.west);
+
+\draw[wire] (x4.east) -- (po1box.west);
+\draw[wire] (n12.east) -- (po1box.west);
+
+% Output labels on the far right (ports)
+\node[lab] ($po_0$) at (10, 0.75) {};
+\node[lab] ($po_1$) at (10, -0.75) {};
+
+% Draw explicit output wires to the right (so outputs are clearly on the right edge)
+\draw[wire] (po0box.east) -- ++(1.2,0) node[lab, right] {po0};
+\draw[wire] (po1box.east) -- ++(1.2,0) node[lab, right] {po1};
+
+\end{tikzpicture}

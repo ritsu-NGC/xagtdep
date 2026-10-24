@@ -1,0 +1,5 @@
+\Qcircuit @C=0.5em @R=0.2em @!R {
+\lstick{\ket{x_a}}     & \qw       & \gate{T}            & \targ     & \qw      & \ctrl{1} & \gate{T^\dagger}       & \targ     & \ctrl{2} & \qw       & \qw      & \qw       & \ctrl{1} & \qw & \qw       & \gate{T}           & \targ     & \qw      & \ctrl{1} & \gate{T}           & \targ     & \ctrl{2} & \qw       & \qw                & \qw       & \ctrl{1} & \qw\\
+\lstick{\ket{x_b}}     & \targ     & \gate{T^\dagger}    & \qw       & \ctrl{1} & \targ    & \gate{T^\dagger}       & \ctrl{-1} & \qw      & \targ     & \gate{T} & \targ     & \targ    & \qw & \targ     & \gate{T}           & \qw       & \ctrl{1} & \targ    & \gate{T^{\dagger}} & \ctrl{-1} & \qw      & \targ     & \gate{T^{\dagger}} & \targ     & \targ    & \qw\\
+\lstick{\ket{y}}       & \ctrl{-1} & \gate{T}            & \ctrl{-2} & \targ    & \qw      & \gate{T}               & \qw       & \targ    & \ctrl{-1} & \qw      & \ctrl{-1} & \qw      & \qw & \ctrl{-1} & \gate{T^{\dagger}} & \ctrl{-2} & \targ    & \qw      & \gate{T}           & \qw       & \targ    & \ctrl{-1} & \qw                & \ctrl{-1} & \qw      & \qw
+}

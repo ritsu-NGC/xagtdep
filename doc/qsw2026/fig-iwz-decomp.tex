@@ -1,0 +1,22 @@
+\documentclass[border=5mm]{standalone}
+
+% Quantikz + TikZ
+\usepackage{tikz}
+\usetikzlibrary{quantikz}
+
+% Math fonts
+\usepackage{amsmath, amssymb}
+
+\begin{document}
+
+\begin{quantikz}[row sep=0.3cm, column sep=0.55cm]
+\lstick{$x_5$}     & \qw             & \qw        & \qw             & \qw             & \qw              & \qw             & \ctrl{5}       & \qw      & \qw                      & \qw       & \qw               & \qw       & \qw      & \qw        & \qw              & \qw       & \ctrl{5}          & \qw      & \qw                      & \qw      & \qw       \\
+\lstick{$x_4$}     & \qw             & \qw        & \qw             & \qw             & \qw              & \qw             & \ctrl{4}       & \qw      & \qw                      & \qw       & \qw               & \qw       & \qw      & \qw        & \qw              & \qw       & \ctrl{4}          & \qw      & \qw                      & \qw      & \qw       \\
+\lstick{$x_3$}     & \qw             & \qw        & \qw             & \qw             & \qw              & \qw             & \qw            & \qw      & \qw                      & \qw       & \qw               & \ctrl{5}  & \qw      & \qw        & \qw              & \qw       & \qw               & \qw      & \qw                      & \qw      & \qw       \\
+\lstick{$x_2$}     & \qw             & \qw        & \qw             & \qw             & \ctrl{2}         & \qw             & \qw            & \qw      & \ctrl{2}                 & \qw       & \qw               & \ctrl{4}  & \qw      & \qw        & \ctrl{2}         & \qw       & \qw               & \qw      & \ctrl{2}                 & \qw      & \qw       \\
+\lstick{$x_1$}     & \qw             & \ctrl{2}   & \ctrl{2}        & \qw             & \qw              & \qw             & \qw            & \qw      & \qw                      & \qw       & \ctrl{2}          & \qw       & \qw      & \qw        & \qw              & \qw       & \qw               & \qw      & \qw                      & \qw      & \ctrl{2}  \\
+\lstick{$a_1$}     & \qw             & \qw        & \qw             & \qw             & \gate{i\omega Z} & \gate{H}        & \gate{iZ}      & \gate{H} & \gate{i\omega Z^\dagger} & \qw       & \qw               & \qw       & \qw      & \qw        & \gate{i\omega Z} & \gate{H}  & \gate{iZ^\dagger} & \gate{H} & \gate{i\omega Z^\dagger} & \qw      & \qw       \\
+\lstick{$a_2$}     & \qw             & \gate{iZ}  & \targ{}         & \gate{H}        & \ctrl{-1}        & \qw             & \qw            & \qw      & \ctrl{-1}                & \gate{H}  & \gate{iZ^\dagger} & \qw       & \qw      & \gate{H}   & \ctrl{-1}        & \qw       & \qw               & \qw      & \ctrl{-1}                & \gate{H} & \targ{}   \\
+\lstick{$\ket{0}$} & \gate{H}        & \ctrl{-1}  & \qw             & \qw             & \qw              & \qw             & \qw            & \qw      & \qw                      & \qw       & \ctrl{-1}         & \gate{Z}  & \gate{H} & \qw        & \qw              & \qw       & \qw               & \qw      & \qw                      & \qw      & \qw       \\
+\end{quantikz}
+\end{document}

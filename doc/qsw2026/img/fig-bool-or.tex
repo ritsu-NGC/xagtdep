@@ -1,0 +1,9 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+          \push{\ket{{x}_{1}} }  & \multigate{5}{x_k \cdot {F'}_1} & \qw      & \multigate{5}{\overline{x_k} \cdot {F'}_0} &\qw\\
+          \push{\ket{{x}_{2}} }  & \ghost{x_k \cdot {F'}_1}        & \qw      & \ghost{\overline{x_k} \cdot {F'}_0}        &\qw\\
+          \push{\vdots}          &                                 &          &                                            &   \\
+          \push{\ket{{x}_{k}} }  & \ghost{x_k \cdot {F'}_1}        & \qw      & \ghost{\overline{x_k} \cdot {F'}_0}        &\qw\\
+          \push{\vdots}          &                                 &          &                                            &   \\
+          \push{\ket{{x}_{n-1}} }& \ghost{x_k \cdot {F'}_1}        & \qw      & \ghost{\overline{x_k} \cdot {F'}_0}        &\qw\\
+          \push{{\ket{0}}}       & \rtoftarg\qwx[-1]               & \qw      & \rtoftarg\qwx[-1]                          &\qw\\
+}

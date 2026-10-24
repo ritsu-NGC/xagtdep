@@ -1,0 +1,5 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+          \lstick{\ket{x_1}} & \ctrl{2}\qw         & \qw &          & & \qw               & \qw                       & \qw      & \qw                       & \ctrl{2} & \qw               & \qw      & \qw                         & \qw               & \qw & \ket{x_1}\\
+          \lstick{\ket{x_2}} & \ctrl{1}            & \qw & \push{=} & & \qw               & \qw                       & \ctrl{1} & \qw                       & \qw      & \qw               & \ctrl{1} & \qw                         & \qw               & \qw & \ket{x_2}\\
+          \lstick{\ket{x_3}} & \push{\rtoftarg}\qw & \qw &          & & \gate{\mathrm{H}} & \gate{\mathrm{T^\dagger}} & \targ    & \gate{\mathrm{T}} & \targ    & \gate{\mathrm{T^{\dagger}}} & \targ    & \gate{\mathrm{T}} & \gate{\mathrm{H}} & \qw & \push{e^{i\Delta\theta}\ket{x_1 \cdot x_2 \oplus x_3}}\\
+}

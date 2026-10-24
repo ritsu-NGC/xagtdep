@@ -1,0 +1,22 @@
+\documentclass[border=5mm]{standalone}
+
+% Quantikz + TikZ
+\usepackage{tikz}
+\usetikzlibrary{quantikz}
+
+% Math fonts
+\usepackage{amsmath, amssymb}
+
+\begin{document}
+
+\begin{quantikz}[row sep=0.3cm, column sep=0.55cm]
+\lstick{$x_5$}     & \qw        & \qw             & \qw       & \ctrl{5} & \qw       & \qw        & \qw       & \qw       & \ctrl{5} & \qw      & \qw       \\
+\lstick{$x_4$}     & \qw        & \qw             & \qw       & \ctrl{4} & \qw       & \qw        & \qw       & \qw       & \ctrl{4} & \qw      & \qw       \\
+\lstick{$x_3$}     & \qw        & \qw             & \ctrl{4}  & \qw      & \ctrl{4}  & \qw        & \ctrl{5}  & \ctrl{4}  & \qw      & \ctrl{4} & \qw       \\
+\lstick{$x_2$}     & \qw        & \ctrl{3}        & \qw       & \qw      & \qw       & \qw        & \ctrl{4}  & \qw       & \qw      & \qw      & \ctrl{3}  \\
+\lstick{$x_1$}     & \ctrl{3}   & \qw             & \qw       & \qw      & \qw       & \ctrl{3}   & \qw       & \qw       & \qw      & \qw      & \qw       \\
+\lstick{$a_1$}     & \qw        & \qw             & \ctrl{1}  & \targ{}  & \ctrl{1}  & \qw        & \qw       & \ctrl{1}  & \targ{}  & \ctrl{1} & \qw       \\
+\lstick{$a_2$}     & \ctrl{1}   & \targ{}         & \targ{}   & \qw      & \targ{}   & \ctrl{1}   & \qw       & \targ{}   & \qw      & \targ{}  & \targ{}   \\
+\lstick{$\ket{0}$} & \targ{}    & \qw             & \qw       & \qw      & \qw       & \targ{}    & \targ{}   & \qw       & \qw      & \qw      & \qw       \\
+\end{quantikz}
+\end{document}

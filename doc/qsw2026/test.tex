@@ -1,0 +1,48 @@
+%% \documentclass{article}
+%% \usepackage{tikz}
+%% \usetikzlibrary{arrows.meta, shapes, positioning, calc, fit}
+%% \usepackage{quantikz}
+%% \begin{document}
+%% \begin{quantikz}
+%% & \gate{H} & \ctrl{1}\gategroup[2,steps=3,style={inner sep=6pt}]{reversed c-{\sc not}} & \gate{H} & \ctrl{1} &
+%% \gate{H} & \ctrl{1} & & \\
+%% & & \targ{} & \gate{H} & \targ{} & \gate{H} & \targ{} & \gate{H} & \\
+%% & \qw & \qw & \qw & \qw & \qw & \qw & \qw & \\
+%% & \qw & \qw & \qw & \qw & \qw & \qw & \qw & \\
+%% & \qw & \qw & \qw & \qw & \qw & \qw & \qw &
+%% \end{quantikz}
+%% \end{document}
+
+%% \documentclass{article}
+%% \usepackage{tikz}
+%% \usetikzlibrary{arrows.meta, shapes, positioning, calc, fit}
+%% \usepackage{quantikz}
+%% \begin{document}
+%% \begin{quantikz}
+%% & \qw & \qw & \qw & \qw & \qw & \qw & \qw & \\
+%% & \gate{H} & \ctrl{1}\gategroup[2,steps=3,style={inner sep=6pt}]{reversed c-{\sc not}} & \gate{H} & \ctrl{1} &
+%% \gate{H} & \ctrl{1} & & \\
+%% & & \targ{} & \gate{H} & \targ{} & \gate{H} & \targ{} & \gate{H} &
+%% \end{quantikz}
+%% \end{document}
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes, positioning, calc, fit}
+\usepackage{quantikz}
+\begin{document}
+%% \begin{quantikz}
+%% & \gate{H} &
+%% \ctrl{1}\gategroup[2,steps=3,style={dashed,rounded
+%% corners,fill=blue!20, inner
+%% xsep=2pt},background,label style={label
+%% position=below,anchor=north,yshift=-0.2cm}]{{\sc
+%% swap}} & \targ{} & \ctrl{1} & & \\
+%% & & \targ{} & \ctrl{-1} & \targ{} & \gate{H} &
+%% \end{quantikz}
+%% \begin{quantikz}
+%% & \gate{H} & \ctrl{1}\gategroup[2,steps=3,style={inner sep=6pt}]{reversed c-{\sc not}} & \gate{H} & \ctrl{1} &
+%% \gate{H} & \ctrl{1} & & \\
+%% & & \targ{} & \gate{H} & \targ{} & \gate{H} & \targ{} & \gate{H} &
+%% \end{quantikz}
+\input{img/fig-gadget-decomp.tex}
+\end{document}

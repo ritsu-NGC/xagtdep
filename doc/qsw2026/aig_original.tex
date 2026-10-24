@@ -1,0 +1,82 @@
+% Auto-generated TikZ AIG diagram
+\documentclass[tikz,border=2mm]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows.meta,positioning}
+\begin{document}
+\begin{tikzpicture}[every node/.style={font=\small}, >=Stealth]
+
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n1) at (0.000,-3.000) {In1};
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n2) at (0.000,-1.800) {In2};
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n3) at (0.000,-0.600) {In3};
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n4) at (0.000,0.600) {In4};
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n5) at (0.000,1.800) {In5};
+\node[draw, rectangle, minimum width=8mm, minimum height=4mm] (n6) at (0.000,3.000) {In6};
+\node[draw, circle, minimum size=7mm] (n7) at (3.000,-1.800) {7};
+\node[draw, circle, minimum size=7mm] (n8) at (6.000,-0.600) {8};
+\node[draw, circle, minimum size=7mm] (n9) at (3.000,-0.600) {9};
+\node[draw, circle, minimum size=7mm] (n10) at (9.000,-0.600) {10};
+\node[draw, circle, minimum size=7mm] (n11) at (6.000,0.600) {11};
+\node[draw, circle, minimum size=7mm] (n12) at (3.000,0.600) {12};
+\node[draw, circle, minimum size=7mm] (n13) at (12.000,-1.800) {13};
+\node[draw, circle, minimum size=7mm] (n14) at (12.000,-0.600) {14};
+\node[draw, circle, minimum size=7mm] (n15) at (9.000,0.600) {15};
+\node[draw, circle, minimum size=7mm] (n16) at (12.000,0.600) {16};
+\node[draw, circle, minimum size=7mm] (n17) at (15.000,-3.000) {17};
+\node[draw, circle, minimum size=7mm] (n18) at (15.000,-1.800) {18};
+\node[draw, circle, minimum size=7mm] (n19) at (15.000,-0.600) {19};
+\node[draw, circle, minimum size=7mm] (n20) at (12.000,1.800) {20};
+\node[draw, circle, minimum size=7mm] (n21) at (18.000,-0.600) {21};
+\node[draw, circle, minimum size=7mm] (n22) at (15.000,0.600) {22};
+\node[draw, circle, minimum size=7mm] (n23) at (3.000,1.800) {23};
+\node[draw, circle, minimum size=7mm] (n24) at (15.000,1.800) {24};
+\node[draw, circle, minimum size=7mm] (n25) at (15.000,3.000) {25};
+\node[draw, circle, minimum size=7mm] (n26) at (18.000,0.600) {26};
+\draw[->] (n6) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n7);
+\draw[->] (n5) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n7);
+\draw[->] (n7) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n8);
+\draw[->] (n2) -- (n8);
+\draw[->] (n3) -- (n9);
+\draw[->] (n2) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n9);
+\draw[->] (n8) -- (n10);
+\draw[->] (n5) -- (n10);
+\draw[->] (n7) -- (n11);
+\draw[->] (n6) -- (n11);
+\draw[->] (n4) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n12);
+\draw[->] (n1) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n12);
+\draw[->] (n10) -- (n13);
+\draw[->] (n7) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n13);
+\draw[->] (n10) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n14);
+\draw[->] (n1) -- (n14);
+\draw[->] (n11) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n15);
+\draw[->] (n6) -- (n15);
+\draw[->] (n12) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n16);
+\draw[->] (n10) -- (n16);
+\draw[->] (n14) -- (n17);
+\draw[->] (n10) -- (n17);
+\draw[->] (n14) -- (n18);
+\draw[->] (n4) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n18);
+\draw[->] (n16) -- (n19);
+\draw[->] (n2) -- (n19);
+\draw[->] (n15) -- (n20);
+\draw[->] (n5) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n20);
+\draw[->] (n17) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n21);
+\draw[->] (n14) -- (n21);
+\draw[->] (n14) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n22);
+\draw[->] (n1) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n22);
+\draw[->] (n1) -- (n23);
+\draw[->] (n1) -- (n23);
+\draw[->] (n13) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n24);
+\draw[->] (n3) -- (n24);
+\draw[->] (n14) -- (n25);
+\draw[->] (n5) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n25);
+\draw[->] (n24) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n26);
+\draw[->] (n8) -- node[midway,draw,circle,fill=white,inner sep=0.6pt] {} (n26);
+\node[draw, rectangle, minimum width=10mm] (out0) at (21.000,-1.200) {Out0};
+\draw[->] (n9) -- (out0);
+\node[draw, rectangle, minimum width=10mm] (out1) at (21.000,0.000) {Out1};
+\draw[->] (n19) -- (out1);
+\node[draw, rectangle, minimum width=10mm] (out2) at (21.000,1.200) {Out2};
+\draw[->] (n15) -- (out2);
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,8 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+                             &            &     &          &  & &                           &          &                                &          &                                &          &                             &          & \push{x_a}            &          &     & \\
+          \lstick{\ket{x_a}} & \ctrl{3}   & \qw &          &  & & \qw                       & \ctrl{4} & \qw                            & \qw      & \qw                            & \ctrl{4} & \qw                         & \qw      & \gate{\mathrm{T}}     & \ctrl{2} & \qw & \\
+                             &            &     &          &  & &                           &          &                                &          & \push{x_b}                     &          &                             &          & \push{x_a \oplus x_b} &          &     & \\
+          \lstick{\ket{x_b}} & \ctrl{2}   & \qw & \push{=} &  & & \qw                       & \qw      & \qw                            & \ctrl{2} & \gate{\mathrm{T^{\dagger}}}    & \qw      & \qw                         & \ctrl{2} & \gate{\mathrm{T}}     & \targ    & \qw & \\
+                             &            &     &          &  & & \push{y}                  &          & \push{x_a \oplus y}            &          & \push{x_a \oplus x_b \oplus y} &          & \push{x_b \oplus y}         &          &                       &          &     & \\
+          \lstick{\ket{y}}   & \ctrl{-1}  & \qw &          &  & & \gate{\mathrm{T}}         & \targ    & \gate{\mathrm{T^{\dagger}}}    & \targ    & \gate{\mathrm{T}}              & \targ    & \gate{\mathrm{T^{\dagger}}} & \targ    & \qw                   & \qw      & \qw & \\
+}

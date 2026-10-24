@@ -1,0 +1,70 @@
+\usetikzlibrary{positioning}
+\definecolor{offwhite}{HTML}{F2EDED}
+%% \tikzset{
+%%     > = stealth,
+%%     every node/.append style = {
+%%         draw = none,
+%%         text = offwhite
+%%     },
+%%     every path/.append style = {
+%%         arrows = ->,
+%%         draw = offwhite,
+%%         fill = offwhite
+%%     },
+%%     hidden/.style = {
+%%         draw = offwhite,
+%%         shape = circle,
+%%         inner sep = 1pt
+%%     }
+%% }
+%% \tikz{
+%%     \node (x) {$X$};
+%%     \node[hidden] (z) [above right = of x] {$Z$};
+%%     \node (y) [below right = of z] {$Y$};
+%%     \path (x) edge (y);
+%%     \path (z) edge (x);
+%%     \path (z) edge (y);
+%% }
+\tikzset{
+  > = stealth,
+  every node/.append style = {
+    draw      = black,
+    shape     = circle,
+    inner sep = 1
+  },
+  every path/.append style = {
+        arrows = ->,
+        draw = black,
+        fill = offwhite
+  },  
+  input/.style = {
+    draw = none
+  }
+}
+
+\tikz{
+  \node[input] (x1) at (0,0) {$x1$};
+  \node[input] (x2) at (1,0) {$x2$};
+  \node[input] (x3) at (2,0) {$x3$};
+  \node[input] (x4) at (3,0) {$x4$};
+  \node[input] (x5) at (4,0) {$x5$};
+  \node[input] (y1) at (1,3) {$y1$};
+  \node[input] (y2) at (3,4) {$y2$};
+  \node (1) at (1,1) {$1$};
+  \node (2) at (3,1) {$2$};
+  \node (3) at (1,2) {$3$};
+  \node (4) at (3,2) {$4$};
+  \node (5) at (3,3) {$5$};      
+  \path (x1) edge (3);
+  \path (x2) edge (1);
+  \path (x3) edge (1);
+  \path (x4) edge (2);
+  \path (x5) edge (2);
+  \path (x5) edge (5);
+  \path (1)  edge (3);
+  \path (1)  edge (4);    
+  \path (2)  edge (4);
+  \path (4)  edge (5);
+  \path (3)  edge (y1);
+  \path (5)  edge (y2);  
+}

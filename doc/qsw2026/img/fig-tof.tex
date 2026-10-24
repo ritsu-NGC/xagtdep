@@ -1,0 +1,7 @@
+\Qcircuit @C=1em @R=1em {
+  \lstick{\ket{x_1}} & \multigate{3}{F} &&         & &\qw               & \multigate{3}{F\cdot a} & \qw            &  \push{\ket{x_1}}                               \\
+  \lstick{\ket{x_2}} & \ghost{F}        &&         & &\qw               & \ghost{F\cdot a}        & \qw            &  \push{\ket{x_2}}                               \\
+                     & \ghost{F}        &&\push{=} & &\push{\vdots}     & \ghost{F\cdot a}        & \push{\vdots}  &                                                   \\
+  \lstick{\ket{x_n}} & \ghost{F}        &&         & &\qw               & \ghost{F\cdot a}        & \qw            &  \push{\ket{x_n}}                               \\
+  \lstick{\ket{y}}   & \targ\qwx[-1]    &&         & &\gate{H}          & \ghost{F\cdot a}        & \gate{H}       &  \push{\ket{x_1 \cdot x_2 \cdots x_n \oplus y}} \\ 
+}

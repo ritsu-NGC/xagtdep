@@ -1,0 +1,11 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+  \push{q_1 : \ket{{x}_{1}} }   & & \multigate{5}{F} & \qw & &   & & \multigate{4}{F'} & \qw & \qw           & \qw & \multigate{4}{{F'}^{\dagger}} & \qw & \rstick{\ket{{x}_{1}}} \\
+  \push{q_2 : \ket{{x}_{2}} }   & & \ghost{F}        & \qw & &   & & \ghost{F'}        & \qw & \qw           & \qw & \ghost{{F'}^{\dagger}}        & \qw & \rstick{\ket{{x}_{2}}}  \\
+  \push{q_3 : \ket{{x}_{3}} }   & & \ghost{F}        & \qw & &   & & \ghost{F'}        & \qw &               & \qw & \ghost{{F'}^{\dagger}}        & \qw & \rstick{\ket{{x}_{3}}}  \\
+  \push{\vdots}           & &                  &     & & = & & \push{\vdots}     &     & \push{\vdots} &     & \push{\vdots}                 &     & \rstick{\vdots }    \\       
+  \push{q_4 : \ket{{x}_{n-1}}}  & & \ghost{F}        & \qw & &   & & \ghost{F'}\qwx[1] & \qw & \qw           & \qw & \ghost{{F'}^{\dagger}}        & \qw & \rstick{\ket{{x}_{n-1} }} \\
+  \push{q_5 : \ket{{x}_{n}} }   & & \ghost{F}        & \qw & &   & &  \qw              & \qw & \ctrl{2}      & \qw & \qw                           & \qw & \rstick{\ket{{x}_{n} }} \\
+  \push{q_6 : \ket{0} }         & & \qw              & \qw & &   & & \targ\qwx[-2]     & \qw & \control\qw   & \qw & \targ\qwx[-2]                 & \qw & \rstick{\ket{0} }  \\    
+  \push{q_7 : \ket{0} }         & & \targ\qwx[-2]    & \qw & &   & & \qw               & \qw & \targ         & \qw & \qw                           & \qw & \rstick{\ket{F} } \\
+}
+

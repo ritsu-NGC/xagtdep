@@ -1,0 +1,269 @@
+\documentclass[twocolumn,a4paper]{article}
+%\usepackage{sasimi}
+%%%% If you use A4 size paper add ``a4'' option as follows
+\usepackage[a4]{sasimi}
+
+\usepackage{color}
+%%%% Optional package for better font
+%\usepackage{txfonts}
+
+\begin{document}
+%date not printed
+\date{}
+
+%make title
+\title{\Large\bf
+Author's GUIDE\\~\\
+\large\bf
+Preparation of Papers in Two-Column Format\\
+for \sasimititle}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%                                                               %%%%
+%%%% ATTENTION: To permit blind review,                            %%%%
+%%%%            Please DO NOT include author names                 %%%%
+%%%%            in initial submission                              %%%%
+%%%%                                                               %%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%for single author
+%\author{Center the Authors Names Here \\
+%Center the Affiliations Here\\
+%Center the City, Stats and Country Here\\
+%{\small (it is your option if you want your entire address listed)}}
+
+%for two authors
+\author{\normalsize
+ \begin{tabular}[t]{c@{\extracolsep{8em}}c}
+  \large Author Name& \large Coauthor Name \\
+  \\
+   Author Department & Coauthor Department \\
+   Author Institute  & Coauthor Institute \\
+   City, ST~~zipcode & City, ST~~zipcode \\
+   author@example.org & coa@example.org
+\end{tabular}}
+
+\maketitle
+
+\thispagestyle{empty}
+
+{\small\bf Abstract---
+Abstract is a brief (50--80 word) synopsis of your paper.
+The purpose is to provide a quick outline of your presentation,
+giving the reader an overview of the research.
+It must be fit within the size allowed, which is about 3\,inches or 7.5\,centimeters.}
+
+\section{Introduction}
+
+These introductions give you basic guidelines for
+preparing camera-ready papers for the SASIMI 2027 proceedings.
+The instructions assume that you have computer desktop publishing equipment with several fonts.
+
+These instructions have been prepared in the preferred format.
+For items not addressed here, please refer to recent issues of IEEE Transactions and simulate,
+as closely as possible.
+
+\section{How to Format the Page}
+
+\subsection{Full-Size Camera-Ready Copy}
+
+Prepare Camera-Ready paper in full size format, on A4 size paper.
+
+The length of a short paper is 2 pages, and that of a full paper is 3 to 6 pages, including all figures and tables.
+
+
+\subsection{Fonts}
+
+The best results will be obtained if your computer word-processor has several font sizes.
+Try to follow the font sizes specified in Table I as best as you can.
+As an aid to gauging font size, 1\,point is about 0.35\,mm.
+Use a proportional, serif font such as Times New Roman.
+Any paper using a font smaller than 9\,pt or larger than 10\,pt for main text will not be included in the proceedings.
+
+\begin{table}[tb]
+\caption{Fonts for Camera-Ready Papers}
+\begin{minipage}{8cm}
+\def\arraystretch{1.5}\tabcolsep 2pt
+\def\thefootnote{a}\footnotesize
+\begin{tabular}{l@{~}l@{~~~}l}
+\hline
+\parbox[c]{7mm}{~\\[-2pt]Font\\Size\\[-7pt]} & Style & Text\\
+\hline
+ 14\,pt&bold     &Paper title\\
+ 12\,pt&         &Authors' names\\
+ 10\,pt&         &Authors' affiliations, main text, equations,\\[-5pt]
+       &         &first letters in section titles\footnotemark[1]\\
+ 10\,pt&italic   &Subheadings\\
+ ~9\,pt&bold     &Abstract\\
+ ~8\,pt&         &Section titles\footnotemark[1], table
+                  names\footnotemark[1], first letters in table\\[-5pt]
+       &         &captions\footnotemark[1],
+                  tables, figure captions, references,\\[-5pt]
+       &         &footnotes, text subscripts and superscripts\\
+ ~6\,pt&         &Table captions\footnotemark[1], table superscripts\\
+\hline
+\end{tabular}
+\footnotetext[1]{\scriptsize Uppercase}
+\end{minipage}
+\end{table}
+
+
+\subsection{Formats}
+
+In formatting your A4-size paper, set top margin to 29\,mm (1.14\,inches),
+bottom margin to 30\,mm (1.18\,inches), left and right margins to 15\,mm (0.59\,inches).
+The column width is 88\,mm (3.46\,inches) with 5\,mm (0.2\,inches) space between the two columns.
+You should left- and right-justify your columns.
+
+All of the accepted papers will be included in electronic proceedings.
+In addition, SASIMI 2027 is going to introduce an ``official archive''
+on the web site (\verb|https://sasimi.jp/|) where only the papers chosen by the authors are uploaded for open access.
+Use automatic hyphenation if you have it and check spelling. Either digitize or paste down your figures.
+
+\iffalse
+\subsection{Reduction Mats}
+
+If you have only typewriter fonts available, use 75\% reduction mats
+(model paper). The mats are not available in this conference.  If
+necessary, make your own mats, 27.9cm X 36.5 cm. If you define the lower
+left corner on the mat as the origin, the (x,y) coordinate in centimeters
+of the column corners are given in Table II. Attach paragraphs and
+figures with paste. It is not necessary to right-justify your columns.
+If you do not have italics, use underlines. Do not use a dot-matrix
+printer. Avoid hand lettering. If you prepare the mat text with a
+computer, rather than a typewriter, final type size after reduction
+should approximate those listed in Table I.
+
+%Table I has been described using macros (re-)defined in this file,
+%but you can describe tables by a standard ``center evironment of LaTeX''
+%as shown below.
+
+\begin{center}
+{\footnotesize\sc TABLE II\\
+ Coordinates in Centimeters of Column\\
+ Corners for Reduction Mats}
+\vskip .9\baselineskip
+{\def\arraystretch{1.5}\tabcolsep 5pt\footnotesize
+\begin{tabular}{ll}
+\hline
+First Column   & Second Column\\
+\hline
+(1.95, 34.50)(13.65, 34.50)&(14.35, 34.50)(25.05, 34.50)\\
+(1.95,  1.80)(13.65,  1.80)&(14.35,  1.80)(26.05,  1.80)\\
+\hline
+\end{tabular}}
+\end{center}
+\fi
+
+\section{Figures and Tables}
+
+Place figures and tables at the tops and bottoms of columns.
+Avoid placing them in the middle of columns.
+Large figures and tables may span across both columns.
+Color figures can be included in proceedings,
+which should be visible even when the manuscript is printed in monochrome.
+Figure captions should be below the figures; table captions should be above the tables.
+Avoid placing figures and tables before their first mention in the text.
+Use the abbreviation ``Fig.~1'', even at the beginning of a sentence.
+
+\begin{figure}[tb]
+\begin{center}
+\begin{minipage}{5cm}
+$.$\hrulefill $.$\\$|$\hfill $|$\\$|$\hfill $|$\\$|$\hfill $|$\\
+$|$\hfill this is \hfill $|$\\
+$|$\hfill a sample \hfill $|$\\
+$|$\hfill  figure  \hfill $|$\\
+$|$\hfill $|$\\$|$\hfill $|$\\$|$\hfill $|$\\$.$\hrulefill $.$\\
+\end{minipage}
+\caption{This is a sample figure. Captions exceeding
+one line are arranged like this.}
+\end{center}
+\end{figure}
+
+\section{Helpful Hints}
+
+\subsection{References}
+List and number all references at the end of the paper. When referring
+to them in the text, type the corresponding reference number in the
+parentheses as shown at the end of this sentence \cite{key}. Number
+the citations consecutively. The sentence punctuation follows the
+parentheses. Do not use ``Ref.\cite{baz}'' or
+``reference\cite{baz}'' except at the beginning of a sentence.
+
+\subsection{Footnotes}
+Number the footnotes separately in superscripts. Place the actual
+footnote at the bottom of the column in which it is cited. Do not put
+footnotes in the reference list.
+
+\subsection{Authors names}
+
+Give all authors' names; do not use ``et al'' unless there are six
+authors or more. Papers that have not been published, even if they have
+been submitted for publication, should be cited as
+``unpublished''\cite{unpub}.  Papers that have been accepted for
+publication should be cited as ``in press''\cite{inpress}.
+Capitalize only the first word in a paper title, except for proper nouns
+and element symbols.
+
+For papers published in translation journals, please give the English
+citation first, followed by the original foreign language
+citations\cite{trans}.
+
+
+\section{Summary and Conclusions}
+This template will get you through a sample article.  The template
+will be available on the web-site \verb|https://sasimi.jp/|.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%                                                               %%%%
+%%%% ATTENTION: To permit blind review,                            %%%%
+%%%%            Please DO NOT include acknowledgement              %%%%
+%%%%            in initial submission                              %%%%
+%%%%                                                               %%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%this is how to do an unnumbered subsection
+\section*{\sc Acknowledgements}
+This guide is compiled from the author's Guide for the
+ASP-DAC'95/CHDL'95/VLSI'95.
+This article was written by referring to {\em ``Author's guide --
+Preparation of Papers in Two-Column Format for VLSI Symposia on
+Technology and Circuits''}, the {\em ``Preparation of Papers in
+Two-Column Format for the Proceedings of the 32nd ACM/IEEE Design
+Automation Conference''} written by Ann Burgmeyer, IEEE and {\em ``the
+template for producing IEEE-format articles using LaTeX''}, written by
+Matthew Ward, Worcester Polytechnic Institute.
+
+
+\begin{thebibliography}{9}
+\footnotesize
+\bibitem{key}
+I.~M.~Author,
+``Some related article I wrote,''
+{\em Some Fine Journal}, vol.~17, pp.~1--100, 1987.
+
+\bibitem{baz}
+A.~N.~Expert,
+{\em A Book He Wrote,}
+His Publisher, 1989.
+
+\bibitem{unpub}
+M.~Smith,
+``Title of paper optional here,''
+unpublished.
+
+\bibitem{inpress}
+K.~Rose,
+``Title of paper with only first word capitalized,''
+in press.
+
+\bibitem{trans}
+T.~Murayama,
+``Title of paper published in translation journals,''
+{\em Some English Journal}, vol.~17, pp.~1--100, 1995.
+({\em Original Foreign Journal, vol.~1, pp.~100--200, 1993.})
+
+
+\end{thebibliography}
+\end{document}

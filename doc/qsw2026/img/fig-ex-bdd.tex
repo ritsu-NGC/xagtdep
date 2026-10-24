@@ -1,0 +1,79 @@
+\usetikzlibrary{positioning}
+\definecolor{offwhite}{HTML}{F2EDED}
+%% \tikzset{
+%%     > = stealth,
+%%     every node/.append style = {
+%%         draw = none,
+%%         text = offwhite
+%%     },
+%%     every path/.append style = {
+%%         arrows = ->,
+%%         draw = offwhite,
+%%         fill = offwhite
+%%     },
+%%     hidden/.style = {
+%%         draw = offwhite,
+%%         shape = circle,
+%%         inner sep = 1pt
+%%     }
+%% }
+%% \tikz{
+%%     \node (x) {$X$};
+%%     \node[hidden] (z) [above right = of x] {$Z$};
+%%     \node (y) [below right = of z] {$Y$};
+%%     \path (x) edge (y);
+%%     \path (z) edge (x);
+%%     \path (z) edge (y);
+%% }
+\tikzset{
+  > = stealth,
+  every node/.append style = {
+    draw      = black,
+    shape     = circle,
+    inner sep = 1
+  },
+  every path/.append style = {
+        arrows = ->,
+        draw = black,
+        fill = offwhite
+  },  
+  input/.style = {
+    draw = none
+  }
+}
+
+\tikz{
+
+  \node (root)   at (7,3) {$x3$};      
+  \node (x3)     at (6,2) {$x2$};        
+  \node (nx3)    at (8,2) {$x2$};
+  \node (x3x2)   at (5,1) {$x1$};
+  \node (nx3nx2) at (9,1) {$x1$};
+  \node (out0)   at (6,0) {$0$};
+  \node (out1)   at (8,0) {$1$};
+
+  \path (root) edge (x3); 
+  \path[dashed] (root) edge (nx3);
+  \path (x3) edge (x3x2);
+  \path[dashed] (x3) edge (out0);  
+  \path[dashed] (nx3) edge (nx3nx2);
+  \path (nx3) edge (out1);
+  \path (x3x2) edge (out1);
+  \path[dashed] (x3x2) edge (out0); 
+  \path (nx3nx2) edge (out1);
+  \path[dashed] (nx3nx2) edge (out0); 
+
+  %% \path (x1) edge (3);
+  %% \path (x2) edge (1);
+  %% \path (x3) edge (1);
+  %% \path (x4) edge (1);
+  %% \path (x4) edge (2);
+  %% \path (x5) edge (2);
+  %% \path (x5) edge (5);
+  %% \path (1)  edge (3);
+  %% \path (1)  edge (4);    
+  %% \path (2)  edge (4);
+  %% \path (4)  edge (5);
+  %% \path (3)  edge (y1);
+  %% \path (5)  edge (y2);  
+}

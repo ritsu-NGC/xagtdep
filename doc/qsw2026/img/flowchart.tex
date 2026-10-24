@@ -1,0 +1,101 @@
+%% \begin{tikzpicture}[
+%%     box/.style={draw, rounded corners, fill=orange!20, align=center, font=\small, minimum width=4.2cm, minimum height=1.1cm, rotate=90, text width=3.6cm, inner sep=6pt},
+%%     bigbox/.style={draw, rounded corners, fill=orange!20, align=center, font=\small, minimum width=5.3cm, minimum height=1.3cm, inner sep=8pt, rotate=90, text width=4.6cm},
+%%     bluebox/.style={draw, rounded corners, fill=blue!20, align=center, font=\small, minimum width=2.9cm, minimum height=1.6cm, rotate=90, text width=2.5cm},
+%%     arrow/.style={-Stealth, thick, color=teal!80!black},
+%%     bendarrow/.style={-Stealth, thick, color=teal!80!black, line width=5pt, rounded corners=15pt}
+%% ]
+
+%% % Place nodes in a straight horizontal (east-west) line with rotated text
+%% \node[box] (decompose) at (0,0) {Decompose $f$ into\\ESOP expression};
+%% \node[box] (minimize) at (3,0) {Minimize the \\ number of $n \geq 4$ cubes in ESOP};
+%% \node[box] (map3qubit) at (6.2,0) {Map the $n \leq 3$ cubes to the \textcolor{blue}{3 qubit} library};
+%% \node[box] (optimize) at (9.7,0) {Optimize for T-count and T-depth};
+%% \node[bigbox] (synthesize) at (13.4,0) {Synthesize $n \geq 4$};
+
+%% % Blue box above "map3qubit"
+%% \node[bluebox] (oracle) at (6.2,2.6) {Generate 3bit\\Boolean Oracle\\Library};
+
+%% % Arrows (horizontal)
+%% \draw[arrow] (decompose) -- (minimize);
+%% \draw[arrow] (minimize) -- (map3qubit);
+%% \draw[arrow] (map3qubit) -- (optimize);
+%% \draw[arrow] (optimize) -- (synthesize);
+
+%% % Bent arrow from blue box to map3qubit
+%% \draw[bendarrow] (oracle.south) -- ++(0,-0.7) -- (map3qubit.north);
+
+%% \end{tikzpicture}
+\begin{tikzpicture}[
+    box/.style={draw, rounded corners, fill=orange!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=0.8cm, text width=2.8cm, inner sep=2pt},
+    bigbox/.style={draw, rounded corners, fill=orange!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=1.0cm, inner sep=2.8pt, text width=5.4cm},
+    bluebox/.style={draw, rounded corners, fill=blue!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=1.0cm, text width=2.8cm, inner sep=2pt},
+    arrow/.style={-Stealth, thick, color=teal!80!black},
+    bendarrow/.style={-Stealth, thick, color=teal!80!black}
+]
+
+% Place main vertical nodes
+\node[box] (decompose) at (0,0) {Decompose $f$ into ESOP expression};
+\node[box, below=0.8cm of decompose] (minimize) {Minimize the number of $n \geq 4$ cubes in ESOP};
+\node[box, below=0.8cm of minimize] (synthesize) {Synthesize logic network and QC from $n \geq 4$ cubes};
+
+% Synthesize to the left of map3qubit, aligned with minimize
+\node[box, left=1cm of synthesize] (map3qubit) at ($(synthesize)+( -1,0 )$) {Map the $n \leq 3$ cubes to the 3 qubit library};
+
+% 'Combine' below the midpoint of synthesize and map3qubit
+\path let \p1 = (map3qubit), \p2 = (synthesize) in
+    coordinate (combinecoord) at ({0.5*(\x1+\x2)}, {\y2-1.2cm});
+\node[box] (combine) at (combinecoord) {Append $n \geq 4$ to $n \leq 3$};
+
+% Optimize below combine
+\node[box, below=0.8cm of combine] (optimize) {Optimize for T-count and T-depth};
+
+% Blue box left of decompose
+\node[bluebox, left=0.5cm of decompose] (oracle) {Generate 3bit phase polynomials};
+\node[bluebox, below=0.8cm of oracle] (oraclecirc) {Synthesize 3bit phase subcircuits};
+
+% Arrows
+\draw[arrow] (decompose) -- (minimize);
+\draw[arrow] (minimize) -- (map3qubit);
+\draw[arrow] (minimize) -- (synthesize);
+\draw[arrow] (synthesize) -- (combine);
+\draw[arrow] (map3qubit) -- (combine);
+\draw[arrow] (combine) -- (optimize);
+\draw[arrow] (oracle) -- (oraclecirc);
+\draw[arrow] (oraclecirc) -- (map3qubit);
+% Bent arrow from blue box to map3qubit
+% \draw[arrow] (oracle.south) |- (map3qubit.north);
+
+\end{tikzpicture}
+%% \begin{tikzpicture}[
+%%     box/.style={draw, rounded corners, fill=orange!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=0.8cm, text width=2.8cm, inner sep=2pt},
+%%     bigbox/.style={draw, rounded corners, fill=orange!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=1.0cm, inner sep=2.8pt, text width=5.4cm},
+%%     bluebox/.style={draw, rounded corners, fill=blue!20, align=center, font=\scriptsize, minimum width=3cm, minimum height=1.0cm, text width=2.8cm, inner sep=2pt},
+%%     arrow/.style={-Stealth, thick, color=teal!80!black},
+%%     bendarrow/.style={-Stealth, thick, color=teal!80!black}
+%% ]
+
+%% % Place nodes in a straight vertical line
+%% \node[box] (decompose) at (0,0) {Decompose $f$ into ESOP expression};
+%% \node[box, below=0.8cm of decompose] (minimize) {Minimize the number of $n \geq 4$ cubes in ESOP};
+%% \node[box, below=0.8cm of minimize] (map3qubit) {Map the $n \leq 3$ cubes to the \textcolor{blue}{3 qubit} library};
+%% \node[box, below=0.8cm of minimize, left=1cm of map3qubit] (synthesize) {Synthesize $n \geq 4$};
+%% \node[box, below=0.8cm of synthesize, left=0.5cm of synthesize] (combine) {Combine $n \geq 4$ and $n \leq 3$};
+%% \node[box, below=0.8cm of combine] (optimize) {Optimize for T-count and T-depth};
+
+
+%% % Blue box left of "minimize"
+%% \node[bluebox, left=0.5cm of decompose] (oracle) {Generate 3bit\\Boolean Oracle\\Library};
+
+%% % Arrows (vertical)
+%% \draw[arrow] (decompose) -- (minimize);
+%% \draw[arrow] (minimize) -- (map3qubit);
+%% \draw[arrow] (minimize) -- (synthesize);
+%% \draw[arrow] (synthesize) -- (combine);
+%% \draw[arrow] (map3qubit) -- (combine);
+%% \draw[arrow] (combine) -- (synthesize);
+
+%% % Bent arrow from blue box to map3qubit
+%% \draw[bendarrow] (oracle.south) |- (map3qubit.west);
+
+%% \end{tikzpicture}

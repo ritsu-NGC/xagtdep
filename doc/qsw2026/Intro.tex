@@ -1,0 +1,48 @@
+\section{Introduction}
+\label{Intro}
+
+Multiple Control Toffoli (MCT) gates are essential parts of quantum algorithms. Coming from
+reversible computing, they are also used in quantum computing for large, non-linear
+entangling operations.
+
+MCT are part of a set of operations known as non-Clifford~\cite{bib-barenco-elementary}
+operations. As MCT gates are not elementary gates, they are constructed using a basis gate set,
+often using the Clifford+T set, a uniersal set of quantum gates~\cite{bib-bravyi2005universal}.
+Amy et al proved that there is a minimum number of T-gates,
+which implement non-Clifford operations, to implement the MCT~\cite{amy-meet-in-middle}.
+T-gates are especially important because in fault-tolerant quantum computing, they have a
+higher implementation cost than other gates in the Cliffford+T set~\cite{bib-bravyi2005universal}.
+The number of T-gates, as well as their inverse the T$^{\dagger}$ gate, in a quantum
+circuit is known as the \emph{T-count}. The number of such gates in a dependency chain is known
+as its \emph{T-depth}. T-gates dominate the implementation of a quantum
+circuit so much, optimizing the T-count, especially for large components such as the MCT, is
+an imperative for quantum circuit optimization.
+
+Several techniques have been developed to reduce the T-count. A technique to reduce the number
+of non-Clifford rotations in a quantum circuit was introduced by Barenco et al~\cite{bib-barenco-elementary},
+which allows a \emph{relative-phase}, or an input dependent phase, on the outputs. Other techniques,
+such as \emph{clean ancilla} (initialized to 0)~\cite{bib-mike-and-ike} and \emph{dirty ancilla}
+(no restrictions on value)~\cite{bib-barenco-elementary} decompositions mitigate the asymptotic T-count
+of the MCT.
+
+In general, quantum circuits do not allow for a relative phase, as it can affect other inputs downstream.
+Other work such as from Maslov~\cite{bib-maslov-rtof} and Amy~\cite{bib-amy-phase-state}, attempt
+to combine relative-phase implementations and the clean ancilla decompositions to reduce the cost.
+This is because the Toffoli gates that comprise the decompositions can themselves be implemented
+up to relative phase, because there is a need to \emph{uncompute}, or restore the ancilla's value,
+them later. This uncomputation logic can then erase the relative phase. Other works such
+as Zindorf et al~\cite{bib-zindorf-mct} and Abdessaied et al~\cite{bib-abdessaied-mct} instead use
+the dirty ancilla decomposition. Zindorf et al in particular achieves the best known T-count for
+the MCT using only one dirty ancilla. 
+
+In this work, we employ sum-of-paths techniques used in~\cite{bib-amy-phase-state} and~\cite{bib-amy-cnot}
+to analyze existing techniques and develop gadgets to further reduce the T-count in these MCT
+gates. We find that by employing relative phase techniques on dirty ancilla-like constructions such
+as those used in~\cite{bib-zindorf-mct}, we can achieve T-counts equal to or almost equal to the
+clean ancilla construction with only a single dirty ancilla. This is the best known T-count for MCT
+to the authors' knowledge.
+
+This paper is structured as follows. In~\secref{Pre}, we first introduce preliminary
+knowledge to understand our proposals, including MCT decomposition and
+relative phase. We then present our proposal in~\secref{Pro}, including the relative
+phase dirty ancilla synthesis. Finally, \secref{Conc} concludes with our conclusions and future work.

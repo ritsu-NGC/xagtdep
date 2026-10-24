@@ -1,0 +1,8 @@
+\Qcircuit @C=0.5em @R=0.2em @!R { \\
+  \push{{x}_{0} }    & \multigate{3}{P} & \qw        & \multigate{3}{P^{\dagger}} & \multigate{4}{U} & \qw \\
+  \push{{x}_{1} }    & \ghost{P}        & \qw        & \ghost{P^{\dagger}}        & \ghost{U}        & \qw \\
+  \push{\vdots}     &                  & \vdots     &                          &                  & \vdots \\
+  \push{{x}_{n} }    & \ghost{P}        & \qw        & \ghost{P^{\dagger}}        & \ghost{U}        & \qw \\
+  \push{{\ket{0}}}  & \qw              & \qw        &  \qw                     & \ghost{U}        & \qw \\
+  \push{p_n}        & \targ\qwx[-2]    & \gate{S^n}  & \targ\qwx[-2]            & \qw              & \qw \\
+}

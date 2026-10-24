@@ -1,0 +1,140 @@
+\begin{tikzpicture}[
+    gate/.style={circle, draw, inner sep=2pt},
+    every node/.style={font=\footnotesize},
+    edgelabel/.style={font=\footnotesize, fill=white, inner sep=1pt},
+    >=Stealth,
+    xstep=1cm, ystep=1cm
+]
+
+% ------------------------------------------------------------
+% Inputs (bottom layer)
+% ------------------------------------------------------------
+\node (x1) at (0,0) {$x_1$};
+\node (x2) at (1,0) {$x_2$};
+\node (x3) at (2,0) {$x_3$};
+\node (x4) at (3,0) {$x_4$};
+\node (x5) at (4,0) {$x_5$};
+
+% ------------------------------------------------------------
+% Gates
+% ------------------------------------------------------------
+\node[gate] (xorTop) at (0,2) {$+$};
+\node[gate] (and1)   at (0,1) {$\wedge$};
+\node[gate] (and2)   at (1,2) {$\wedge$};
+
+\node[gate] (xor2) at (1,1) {$+$};
+\node[gate] (and3) at (2,1) {$\wedge$};
+\node[gate] (and4) at (3,1) {$\wedge$};
+
+% Output
+\node (F) at (0,3) {$F$};
+
+% ------------------------------------------------------------
+% Edges + fully angled labels
+% ------------------------------------------------------------
+
+% xorTop ¨ F
+\draw[->] (xorTop) -- (F);
+
+% and1 ¨ xorTop (angle upward-left)
+\draw (and1) -- (xorTop);
+%    node[edgelabel, sloped, above, pos=0.45] {$x_1(\,x_2 \oplus x_3 x_4 x_5\,)$};
+
+% x1 ¨ and1
+\draw (x1) -- (and1);
+
+% and2 ¨ xorTop (sloped)
+\draw (and2) -- (xorTop);
+%    node[edgelabel, sloped, above, pos=0.55] {$x_2 x_3$};
+
+% x2,x3 ¨ and2
+\draw[bend left=45] (x2) to (and2);
+\draw (x3) -- (and2);
+%\draw[bend right=45] (x3) to (and2);
+
+% xor2 ¨ and1 (label angled with edge)
+\draw (xor2) -- (and1);
+%    node[edgelabel, sloped, above, pos=0.55] {$x_2 \oplus x_3 x_4 x_5$};
+
+\draw (x2) -- (xor2);
+
+% and3 ¨ xor2 (sloped)
+\draw (and3) -- (xor2);
+%    node[edgelabel, sloped, above, pos=0.55] {$x_3 x_4 x_5$};
+
+% and4 ¨ and3 (sloped)
+\draw (and4) -- (and3);
+%    node[edgelabel, sloped, above, pos=0.55] {$x_4 x_5$};
+
+% x3 ¨ and3
+\draw (x3) -- (and3);
+
+% x4,x5 ¨ and4
+\draw (x4) -- (and4);
+\draw (x5) -- (and4);
+
+\end{tikzpicture}
+
+%% \documentclass[tikz, border=5pt]{standalone}
+
+%% \usepackage{tikz}
+%% \usetikzlibrary{arrows.meta, calc, positioning}
+
+%% \begin{document}
+
+%% \begin{tikzpicture}[
+%%     gate/.style={circle, draw, inner sep=2pt},
+%%     every node/.style={font=\scriptsize},
+%%     edgelabel/.style={font=\scriptsize, fill=white, inner sep=1pt},
+%%     >=Stealth
+%% ]
+
+%% % Inputs
+%% \node (x1) at (0,0) {$x_1$};
+%% \node (x2) at (1.5,0) {$x_2$};
+%% \node (x3) at (3.0,0) {$x_3$};
+%% \node (x4) at (4.5,0) {$x_4$};
+%% \node (x5) at (6.0,0) {$x_4$};
+
+%% % Output arrow to F
+%% \node (F) at (0,7.0) {$F$};
+
+%% % Top XOR
+%% \node[gate] (xorTop) at (0,6.0) {$+$};
+%% \draw[->] (xorTop) -- (F);
+
+%% % AND gate
+%% \node[gate] (and1) at (0,4.5) {$\wedge$};
+%% \draw (and1) -- (xorTop)
+%%     node[edgelabel, pos=0.5, xshift=-15pt]{$x_1 (x_2 \oplus x_3 x_4 x_5)$};
+%% \draw (x1) -- (and1);
+
+%% % x2x3
+%% \node[gate] (and2) at (1.5,6.0) {$\wedge$};
+%% \draw (and2) -- (xorTop)
+%%     node[edgelabel, pos=0.5, xshift=-15pt]{$x_2 x_3$};
+%% \draw (x2) -- (and2);
+%% \draw (x3) -- (and2);
+
+%% % x2 ^ x3x4x5
+%% \node[gate] (xor2) at (1.5,4.5) {$+$};
+%% \draw (xor2) -- (and1)
+%%     node[edgelabel, pos=0.5, xshift=-15pt]{$x_2 \oplus x_3 x_4 x_5$};
+%% \draw (x2) -- (and2);
+
+%% % x2x3
+%% \node[gate] (and3) at (3.0, 3.0) {$\wedge$};
+%% \draw (and3) -- (xor2)
+%%     node[edgelabel, pos=0.5, xshift=-15pt]{$x_2 x_3$};
+%% \draw (x3) -- (and2);
+
+%% % x2x3
+%% \node[gate] (and4) at (4.5, 1.5) {$\wedge$};
+%% \draw (and4) -- (and3)
+%%     node[edgelabel, pos=0.5, xshift=-15pt]{$x_2 x_3$};
+%% \draw (x4) -- (and4);
+%% \draw (x5) -- (and4);    
+
+%% \end{tikzpicture}
+
+%% \end{document}

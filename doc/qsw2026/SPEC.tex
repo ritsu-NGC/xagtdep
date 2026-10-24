@@ -1,0 +1,320 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{amsmath,amssymb,amsfonts,amstext}
+% \usepackage{algorithmic}
+\usepackage[dvipdfmx]{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage[T1]{fontenc}
+\usepackage{mdframed}
+\usepackage{algorithm, algpseudocode} % texlive-science
+%\usepackage[braket, qm]{qcircuit}
+\usepackage{newtxtext}
+\usepackage[normalem]{ulem}
+\usepackage{nameref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes, positioning, calc, fit}
+\usepackage{quantikz}
+
+%\input{img/defs}
+
+\makeatletter
+\newcommand{\sublabel}[1]{\protected@edef\@currentlabel{\thefigure(\thesubfigure)}\label{#1}}
+\makeatother
+\captionsetup{subrefformat=parens}
+\algrenewcommand\algorithmicindent{0.5em}
+\newtheorem{definition}{Definition}
+\newtheorem{example}{Example}
+\newcommand{\thickhline}{%
+    \noalign {\ifnum 0=`}\fi \hrule height 1pt
+    \futurelet \reserved@a \@xhline
+}
+%\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+%    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\newcommand{\figcaption}[1]{\def\@captype{figure}\caption{#1}}
+\newcommand{\tblcaption}[1]{\def\@captype{table}\caption{#1}}
+
+\newcommand{\Del}[1]{\textcolor{red}{\sout{#1}}}
+\newcommand{\Add}[1]{\textcolor{blue}{\emph{#1}}}
+
+\newcount\NGCcolor
+\NGCcolor=1
+\newcount\NGCcolortwo
+\NGCcolortwo=1
+%\NGCcolor=0
+\ifnum\NGCcolortwo<1
+  \newcommand{\blueoutt}[1]{\textcolor{blue}{#1}}  
+\else
+  \newcommand{\blueoutt}[1]{#1}
+\fi
+  
+\ifnum\NGCcolor<1
+  \newcommand{\redout}[1]{\textcolor{red}{#1}}
+  \newcommand{\blueout}[1]{\textcolor{blue}{#1}}
+  \newcommand{\greenout}[1]{\textcolor{green}{#1}}
+  \newcommand{\cyannout}[1]{\textcolor{cyan}{#1}}
+  \newcommand{\magentaout}[1]{\textcolor{magenta}{#1}}
+  \newcommand{\yellowout}[1]{\textcolor{yellow}{\bf #1}}
+  \newcommand{\algblueout}[1]{\leavevmode\color{blue}{#1}}
+\else
+  \newcommand{\redout}[1]{#1}
+  \newcommand{\blueout}[1]{#1}
+  \newcommand{\greenout}[1]{#1}
+  \newcommand{\cyannout}[1]{#1}
+  \newcommand{\magentaout}[1]{#1}
+  \newcommand{\yellowout}[1]{#1}
+  \newcommand{\algblueout}[1]{\leavevmode {#1}}
+\fi
+% Preamble (requires tikz, which quantikz already uses)
+\newcommand{\qwiregap}[1]{%
+  \gate[style={draw=none}]{#1}%
+}
+\begin{document}
+
+\title{Synthesis of Phase Oracles Using CNOT+T Circuits and ESOP Minimization}
+\author{
+    \IEEEauthorblockN{\phantom{David Clarino}}
+    \IEEEauthorblockA{\phantom{Ritsumeikan University} \\
+      \phantom{dclarino@fc.ritsumei.ac.jp}}
+    \and 
+    \IEEEauthorblockN{\phantom{Chitranshu Arya}}
+    \IEEEauthorblockA{\phantom{Netaji Subhas} \\
+      \phantom{University of Technology} \\
+      \phantom{chitranshu.arya.ug22@nsut.ac.in}}
+    \and
+    \IEEEauthorblockN{\phantom{Shigeru Yamashita}}
+    \IEEEauthorblockA{\phantom{Ritsumeikan University} \\
+      \phantom{ger@cs.ritsumei.ac.jp}}
+    \and
+    \IEEEauthorblockN{\phantom{Zanhe Qi}}
+    \IEEEauthorblockA{\phantom{Ritsumeikan University} \\ \phantom{goose@ngc.is.ritsumei.ac.jp}}
+}
+%% \author{
+%%     \IEEEauthorblockN{David Clarino}
+%%     \IEEEauthorblockA{Ritsumeikan University \\
+%%       dclarino@fc.ritsumei.ac.jp}
+%%     \and 
+%%     \IEEEauthorblockN{Chitranshu Arya}
+%%     \IEEEauthorblockA{Netaji Subhas \\
+%%       University of Technology \\
+%%       chitranshu.arya.ug22@nsut.ac.in}
+%%     \and
+%%     \IEEEauthorblockN{Shigeru Yamashita}
+%%     \IEEEauthorblockA{Ritsumeikan University \\
+%%       ger@cs.ritsumei.ac.jp}
+%%     \and
+%%     \IEEEauthorblockN{Zanhe Qi}
+%%     \IEEEauthorblockA{Ritsumeikan University \\
+%%       goose@ngc.is.ritsumei.ac.jp}
+%% }
+\begin{figure*}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-iwz-last}
+  }
+  \caption{}
+  \label{fig-iwz-last}
+\end{figure*}
+\begin{figure*}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-prop-last}
+  }
+  \caption{}
+  \label{fig-prop-last}
+\end{figure*}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{xag_and}
+  }
+  \caption{AND node}
+  \label{fig-and}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{xag_xor}
+  }
+  \caption{XOR node}
+  \label{fig-xor}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-and}
+  }
+  \caption{XOR diagram}
+  \label{fig-xor-qc}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-iz}
+  }
+  \caption{}
+  \label{fig-iz}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-izd}
+  }
+  \caption{}
+  \label{fig-izd}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-rtof}
+  }
+  \caption{}
+  \label{fig-rtof}
+\end{figure}
+
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-iwz-circ}
+  }
+  \caption{}
+  \label{fig-iwz}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-iwz-circd}
+  }
+  \caption{}
+  \label{fig-iwzd}
+\end{figure}
+
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-iwz-and}
+  }
+  \caption{}
+  \label{fig-iwz-and}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \scalebox{1.0} {
+    \input{fig-prop-and}
+  }
+  \caption{}
+  \label{fig-prop-and}
+\end{figure}
+
+
+\begin{algorithm}
+\caption{Existing Method}
+\begin{algorithmic}[1]
+
+\State $QC \gets$ empty quantum circuit
+\State $xag \gets$ XOR-And-Inverter Graph of the function
+\State $QC \gets \textsc{parseXAG}(xag)$
+
+\Function{parseXAG}{xag}
+    \State $node \gets$ top node of $xag$
+    
+    \If{$node$ A-child is primary input}
+        \State $A \gets$ CNOT with A as control
+    \Else
+        \State $A \gets \textsc{parseXAG}(\text{subgraph of A-child})$
+    \EndIf
+
+    \If{$node$ B-child is primary input}
+        \State $B \gets$ CNOT with B as control
+    \Else
+        \State $B \gets \textsc{parseXAG}(\text{subgraph of B-child})$
+    \EndIf
+
+    \If{$node$ is XOR node}
+        \State $subQC \gets$ generate circuit from Fig.\ref{fig-xor-qc}
+    \ElsIf{$node$ is AND node}
+        \If{$A$ and $B$ are primary inputs}
+            \State $subQC \gets$ generate circuit Fig.~\ref{fig-iz}
+        \ElsIf{node output is overall output}
+            \State $subQC \gets$ generate circuit Fig.~\ref{fig-iwz-last}
+        \ElsIf{one of $A$, $B$ is primary input}
+            \State $subQC \gets$ generate circuit Fig.~\ref{fig-iwz-and}
+        \Else
+            \State \textbf{error}
+        \EndIf
+    \EndIf
+
+    \State \Return $subQC$
+\EndFunction
+
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Proposed Method}
+  \label{alg-prop}
+  \begin{algorithmic}[1]
+
+    \State $QC \gets$ empty quantum circuit
+    \State $xag \gets$ XOR-And-Inverter Graph of the function
+    \State $QC \gets \textsc{parseXAG}(xag)$
+
+    \Function{parseXAG}{xag}
+    \State $node \gets$ top node of $xag$
+    
+    \If{$node$ A-child is primary input}
+    \State $A \gets$ CNOT with A as control
+    \Else
+    \State $A \gets \textsc{parseXAG}(\text{subgraph of A-child})$
+    \EndIf
+
+    \If{$node$ B-child is primary input}
+    \State $B \gets$ CNOT with B as control
+    \Else
+    \State $B \gets \textsc{parseXAG}(\text{subgraph of B-child})$
+    \EndIf
+
+    \If{$node$ is XOR node}
+    \State $subQC \gets$ generate circuit from Fig.\ref{fig-xor-qc}
+    \ElsIf{$node$ is AND node}
+
+    \If{$A$ and $B$ are primary inputs}
+       \State $subQC \gets$ generate circuit Fig.~\ref{fig-rtof}
+    \ElsIf{node output is overall output}
+       \State $subQC \gets$ generate circuit Fig.~\ref{fig-prop-last}
+    \ElsIf{one of $A$, $B$ is primary input}
+       \State $subQC \gets$ generate circuit Fig.~\ref{fig-prop-and}
+    \Else
+       \State \textbf{error}
+    \EndIf
+    \EndIf
+
+    \State \Return $subQC$
+    \EndFunction
+
+  \end{algorithmic}
+\end{algorithm}
+
+
+% DCTODO: Add Evaluation, Results, and Conclusion Sections
+
+%\bibliographystyle{unsrt}
+%\bibliography{ref}
+
+\end{document}

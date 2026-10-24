@@ -1,0 +1,53 @@
+\documentclass[tikz, border=5pt]{standalone}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, calc, positioning}
+
+\begin{document}
+
+\begin{tikzpicture}[
+    gate/.style={circle, draw, inner sep=2pt},
+    every node/.style={font=\scriptsize},
+    edgelabel/.style={font=\scriptsize, fill=white, inner sep=1pt},
+    >=Stealth
+]
+
+% Inputs
+\node (x1) at (0,0) {$x_1$};
+\node (x2) at (1.5,0) {$x_2$};
+\node (x3) at (3.2,0) {$x_3$};
+% Output arrow to F
+\node (F) at (0,3.4) {$F$};
+
+% Top XOR
+\node[gate] (xorTop) at (0,2.6) {$+$};
+\draw[->] (xorTop) -- (F);
+
+% AND gate
+\node[gate] (and1) at (0,1.7) {$\wedge$};
+\draw (and1) -- (xorTop)
+    node[edgelabel, pos=0.5, xshift=-15pt]{$x_1 (x_2 \oplus x_3)$};
+\draw (x1) -- (and1);
+
+%    node[edgelabel, pos=0.5, xshift=8pt]{$x_k$};
+
+% XOR with x3
+\node[gate] (xor23) at (1.7,0.8) {$+$};
+\draw (x2) -- (xor23);
+\draw (x3) -- (xor23);
+\draw (xor23) -- (and1)
+    node[edgelabel, pos=0.5, xshift=-8pt]{$x_2 \oplus x_3$};
+
+% AND gate
+\node[gate] (and2) at (1.7,1.7) {$\wedge$};
+\draw[bend left=45] (x2) to (and2);
+\draw (x3) -- (and2);
+\draw (and2) -- (xorTop)
+    node[edgelabel, pos=0.5, xshift=15pt]{$x_2 x_3$};
+
+
+
+    
+\end{tikzpicture}
+
+\end{document}
