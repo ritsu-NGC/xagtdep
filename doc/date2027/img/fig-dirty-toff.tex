@@ -1,0 +1,9 @@
+\begin{quantikz}[row sep=0.5em, column sep=0.5em]
+  \setwiretype{n}    &     &          &     &                 &                 &&                 & \push{g_0} & \push{g_1} & \push{g_2} & \push{g_3} &  \\  
+  \lstick{\ket{x_0}} & \qw & \ctrl{1} & \qw & \setwiretype{n} & \setwiretype{n} && \setwiretype{q} & \qw        & \ctrl{1}   & \qw        & \ctrl{1}   & \qw & \rstick{\ket{x_0}} \\
+  \lstick{\ket{x_1}} & \qw & \ctrl{1} & \qw & \setwiretype{n} & \setwiretype{n} && \setwiretype{q} & \qw        & \ctrl{2}   & \qw        & \ctrl{2}   & \qw & \rstick{\ket{x_1}} \\
+  \lstick{\ket{x_2}} & \qw & \ctrl{2} & \qw & \setwiretype{n} & \push{=}        && \setwiretype{q} & \ctrl{1}   & \qw        & \ctrl{1}   & \qw        & \qw & \rstick{\ket{x_2}} \\
+  \lstick{a}         & \qw & \qw      & \qw & \setwiretype{n} & \setwiretype{n} && \setwiretype{q} & \ctrl{1}   & \targ{}    & \ctrl{1}   & \targ{}    &  & \rstick{a} \\  
+  \lstick{\ket{y}}   & \qw & \targ{}  & \qw & \setwiretype{n} & \setwiretype{n} && \setwiretype{q} & \targ{}    & \qw        & \targ{}    & \qw        & \qw & \rstick{\ket{x_0 \cdot x_1 \cdot x_2 \oplus y}}  \\
+\end{quantikz}                        
+

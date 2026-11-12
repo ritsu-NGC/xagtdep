@@ -100,117 +100,13 @@ gadget, which we depict in~\figref{fig-dirty-gadget-rp}. This means that we can 
 gadget with the same T-count as a relative phase Toffoli gate. We can similarly formulate an uncompute
 gadget that is this gadget's conjugate, in order to uncompute the value for the same cost. This implies
 that any intermediate computation using dirty ancilla can be performed with the same cost as a relative
-phase Toffoli gate. 
+phase Toffoli gate.
 
 The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. This means that the T-count of
 implementing the output node gadget is 8, so that the difference in T-count between the clean ancilla and
 the dirty ancilla decompositions is dependent on the number of these output nodes, which is the number of
 output bits of the Boolean function $m$. This means that for an MCT gate, the difference between clean
 ancilla and dirty ancilla is 1 T-gate. We can implement these as two RTOF gates.
-%% \begin{table*}[t]
-%%   \hspace{-0.5cm}
-%% \centering
-%% \scalebox{0.9}{
-%%   \begin{tabular}{p{0.05\textwidth}|p{0.10\textwidth}|p{0.10\textwidth}|p{0.75\textwidth}}
-%%     \# & Node & Conditions & Gadget \\\hline
-%%        {1}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_and}
-%%        }
-%%        &
-%%        One of A or B are primary inputs and the other is a fanin from another node.
-%%        All fanouts F are intermediate fanouts
-%%        &
-%%        \scalebox{0.9} {
-%%          \input{fig-prop-and}
-%%        }\\\hline
-%%        {2}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_and}
-%%        }
-%%        &
-%%        Both A and B are fanins from other nodes
-%%        &
-%%        \scalebox{0.9} {
-%%          \input{fig-prop-and-node-fanin}
-%%        }\\\hline
-%%        {3}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_and}
-%%        }
-%%        &
-%%        A and B are primary inputs
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{fig-rtof}
-%%        }\\\hline
-%%        {4}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_and}
-%%        }
-%%        &
-%%        F is a primary output or fans out into an XOR node that is a primary output
-%%        &
-%%        \scalebox{0.9} {
-%%          \input{fig-prop-last-small}
-%%        }\\\hline
-%%        {4}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_fanout}
-%%        }
-%%        &
-%%        A is an AND node that has multiple fanouts
-%%        &
-%%        \scalebox{0.8} {
-%%          \input{fig-prop-multi-fanout}
-%%        }\\\hline
-%%        {5}
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{xag_xor}
-%%        }
-%%        &
-%%        Any XOR node
-%%        &
-%%        \scalebox{1.0} {
-%%          \input{fig-and}
-%%        }
-%%   \end{tabular}
-%% }
-%% \caption{Dirty Ancilla Gadgets}
-%% \label{fig-gadgets}
-%% \end{table*}
-
-%% \begin{table*}[t]
-%% \centering
-%% \begin{tabular}{p{0.25\textwidth}|p{0.24\textwidth}|p{1.5\textwidth}}
-%%   Node & Conditions & Gadget \\\hline
-%%   \subfloat[AND-node]{
-%%     \makebox[0.25\textwidth][c]{\input{xag_and_node}
-%%   }
-%%   &
-%%   F and G are primary inputs and all fanouts are intermediate fanouts
-%%   &
-%%   \subfloat[AND-gadget]{
-%%     \makebox[\textwidth][c]{\input{fig-prop-and}}
-%%   }
-%% \end{tabular}
-%% \caption{Phase Gadgets}
-%% \label{fig-gadgets}
-%% \end{table*}
-
-
-%% The output node will have to implement all 8 terms in~\eqnref{eq-toff-simp}. Observe, however that
-%% $\frac{1}{4}a - \frac{1}{4}(z \oplus a) = - \frac{1}{4}z + \frac{1}{2}(a)$. The $\frac{1}{2}$ coefficient
-%% can be implemented by an S gate, which is a Clifford gate and has a much more efficient fault-tolerant
-%% implementation in most error correcting codes. This means that the T-count of implementing the output
-%% node gadget is 7, the exact same as the Toffoli gate which is used as an output node in clean ancilla
-%% decomposition.
 
 \begin{figure}
   \scalebox{0.6} {
@@ -263,50 +159,6 @@ Our proposed method is as follows
   \caption{Synthesis of circuit in Example~\ref{ex-dirty-xag}}
   \label{fig-prop-decomp}
 \end{figure*}
-  
-%% \begin{algorithm}[h]
-%%   \caption{Proposed Method}
-%%   \label{alg-prop}
-%%   \begin{algorithmic}[1]
-
-%%     \State $QC \gets$ empty quantum circuit
-%%     \State $xag \gets$ XOR-And-Inverter Graph of the function
-%%     \State $QC \gets \textsc{parseXAG}(xag, QC)$
-
-%%     \Function{parseXAG}{xag, QC}
-%%     \If{$node \gets$ $next\_node(xag)$}
-%%        \State $node \gets$ $next\_node(xag)$ \Comment{This is set by a traversal algorithm}
-%%     \Else
-%%        \State \Return $QC$
-%%     \EndIf
-    
-%%     \Switch{}
-%%     \Case{$node$ is XOR}
-%%       \State $subQC \gets$ generate \#4
-%%     \EndCase
-%%     \Case{$node$ is AND and $A$ and $B$ are primary inputs}
-%%       \State $subQC \gets$ generate \#2
-%%     \EndCase
-%%     \Case{$node$ is AND node output is primary output}
-%%          \State $subQC \gets$ generate \#3
-%%          \State $Uncompute \gets$ QC acting on ancilla bit of subQC
-%%          \State $subQC \gets$ Uncompute appended to subQC
-%%     \EndCase
-%%     \Case{$node$ is AND and one of $A$, $B$ is primary input}
-%%          \State $A$ or $B$ $\gets$ QC \Comment{QC is the subcircuit implementing $A$ or $B$}   
-%%          \State $subQC \gets$ generate \#1
-%%     \EndCase
-%%     \EndSwitch
-    
-%%     \State $next_xags \gets$ subgraphs from $node$'s fanouts
-%%     \For{$xag \in next\_xags$}
-%%         \State $retQC$ + $parseXAG(xag, subQC)$
-%%     \EndFor
-%%     \State
-%%     \Return $retQC$
-%%     \EndFunction
-%%   \end{algorithmic}
-%% \end{algorithm}
 
 \subsection{MCT Clean and Dirty Ancilla Decomposition Implications}
 
@@ -322,7 +174,7 @@ Observe that the XAG for the $n$-input AND function is the chain of AND nodes in
 \end{figure}
 
 This allows us to create a a quantum circuit based off the gadgets in~\tabref{fig-gadgets}. This is depicted
-in~\figref{fig-mct-gadgets}. 
+in~\figref{fig-mct-gadgets}.
 
 \begin{figure}[t]
   \centering
@@ -333,7 +185,7 @@ in~\figref{fig-mct-gadgets}.
   \label{fig-mct-gadgets}
 \end{figure}
 
-This construction is remarkably similar to the ``V-chain'' that is created when the clean ancilla 
+This construction is remarkably similar to the ``V-chain'' that is created when the clean ancilla
 decomposition is used, such as in~\figref{fig-clean-mct}. This demonstrates that the difference in
 cost between a dirty ancilla decomposition and a clean ancilla decomposition is the cost of the
 final $\wedge$ gadget, which uses one more T-gate than the Toffoli gate that the clean ancilla
@@ -344,8 +196,7 @@ decomposition uses.
 Boolean Logic Network synthesis methods can also use a method known as a ``pebbling game''.
 In such a pebbling game, steps are arranged to compute and uncompute nodes such that the
 maximum number of qubits that need to be computed at any one time is less than a specified
-number $k$, equal to the number of clean ancilla provided to the 
-
+number $k$, equal to the number of clean ancilla provided to the
 
 \section{Node-Level Pebbling as Incremental SAT}
 
@@ -457,6 +308,35 @@ an already-finalized node belonging to a different, earlier gate --
 which was found to be essential for avoiding spurious cross-gate
 dependency cycles.
 
+\emph{Current implementation note.} In the present
+\texttt{pebbling\_solver.py} codebase, Algorithm~\ref{alg:gategroup}
+has been generalized beyond a strict pebble-limit rule. Phase~1 of
+\texttt{build\_gate\_groups} performs a greedy, topological-order fill
+that admits nodes into the current group until a \emph{hard
+per-group weight ceiling} equal to \texttt{max\_pebbles} would be
+exceeded (an XOR node always contributes weight $0$ and is exempt
+from this ceiling, matching Rule~5 of~\tabref{fig-gadgets}), at which
+point the group is finalized and a new one started. A later pass,
+\texttt{\_split\_mixed\_po\_groups}, enforces the invariant that no
+single group's output set simultaneously contains a genuine primary
+output and a non-primary-output node -- splitting any group that
+violates this before gate-level scheduling begins. Two additional
+phases specifically target the kind of structural symmetry exercised
+by circuits like \texttt{bar} (a barrel shifter): a
+\emph{shared-fanout-consumer cost exemption}, which avoids
+double-charging pebble weight for a producer whose value is consumed
+by multiple sibling gates, and a \emph{sibling fanout merging} phase,
+which co-locates fanout siblings of a common producer into the same
+group when doing so does not violate the weight ceiling. The
+\emph{topological order} Phase~1 walks in is itself a tunable
+parameter (\texttt{topo\_order}, one of \texttt{"creation"},
+\texttt{"dependency\_chain"}, or \texttt{"breadth\_first"}), since
+which nodes end up spatially adjacent in traversal order directly
+determines which nodes are eligible to be grouped together;
+\texttt{"breadth\_first"} in particular keeps all siblings of a shared
+fanout producer adjacent, reducing the work the later merge phases
+need to do.
+
 \section{Gate-Level Pebbling}
 
 \texttt{GatePebbleSolver} re-applies the same three clause families
@@ -477,6 +357,28 @@ node-level final clause; without this refinement the empty schedule
 ($K=0$) would trivially satisfy the naive ``all gates off'' final
 condition.
 
+\emph{Scheduling method (current default).} The present codebase
+treats this Z3-based search, exposed as
+\texttt{find\_best\_gate\_pebbling\_by\_tcount}, as an
+\emph{opt-in} mode (\texttt{--use-tcount-search}) rather than the
+default scheduling path. By default, \texttt{run\_our\_pipeline} now
+calls \texttt{pebble\_gates\_greedy\_first}, a greedy scheduler that
+is substantially cheaper to run on large circuits (e.g.\ EPFL
+benchmarks with thousands of gates) than an incremental SAT search
+over every candidate step count. If greedy scheduling deadlocks
+--- which can occur only if the caller supplies a
+\texttt{solve\_max\_pebbles} smaller than \texttt{grouping\_max\_pebbles}
+--- the error propagates directly as a row-level failure by default;
+a \texttt{--sat-fallback} flag restores the previous behavior of
+silently retrying via the Z3-based search on a greedy deadlock. The
+\emph{grouping} pebble budget passed to \texttt{build\_gate\_groups}
+and the \emph{scheduling} pebble budget passed to the scheduler are
+tracked as two independent quantities (auto-sized, by default, to
+$2\times|O|$ and $2\times$ the grouping budget respectively) rather
+than a single reused value, since the hard per-group weight ceiling
+introduced above means the scheduling budget must always be at least
+as large as the grouping budget for any schedule to exist.
+
 \section{Qubit Assignment and Circuit Synthesis}
 
 A solved gate-level schedule is replayed deterministically
@@ -494,3 +396,201 @@ structure (Toffoli-to-T-gate decompositions for AND nodes, a CNOT
 cascade for XOR nodes), and gadgets are replayed onto a Qiskit
 circuit for QASM export.
 
+\section{Experimental Comparison Against Caterpillar}
+\label{sec-caterpillar-comparison}
+
+To validate the T-count claims above against an independent,
+externally maintained synthesis pipeline, we built a comparison
+harness (\texttt{run\_caterpillar\_experiments.py}) that runs both
+this project's own gate-level pebbling pipeline and
+\texttt{gmeuli/caterpillar} on the identical input circuit, exported
+as a combinational BLIF file, and reports T-count side by side. Since
+\texttt{xagtdep} does not itself expose a Python binding for
+caterpillar, the harness shells out to a small companion C++ binary,
+\texttt{test/blif\_to\_tcount.cpp}, which parses a BLIF file via a
+shared reader (\texttt{test/blif\_common.hpp}), synthesizes it with
+caterpillar's \texttt{xag\_pebbling\_mapping\_strategy} (or, if built
+without Z3, the structural \texttt{xag\_mapping\_strategy}), and
+prints a single-line JSON summary of gate and T-counts.
+
+\subsection{Caterpillar's T-count Convention}
+
+Caterpillar's reported T-count is \emph{not} an estimate under any
+magic-state-injection model -- every T-gate counted is a literal
+non-Clifford gate present in the synthesized circuit, derived by
+replaying \texttt{caterpillar::decompose\_with\_ands}'s exact
+decomposition pattern over the \texttt{stg\_gate} netlist that
+\texttt{logic\_network\_synthesis} produces. Concretely, T-count is
+driven entirely by the number of \emph{distinct} AND triples
+$(c_1, c_2, t)$ that occur among the two-controlled gates in the
+netlist: the first time a given triple appears (its \emph{compute}),
+it is charged $6$ T-gates, $6$ CNOTs, and $2$ Hadamards, following a
+standard Toffoli-to-Clifford+T decomposition; a later recurrence of
+the \emph{exact same} triple (its \emph{uncompute}, via the
+measurement-based free-uncompute trick) is charged $0$ T-gates. This
+convention differs structurally from this project's own gadget-rule
+costs (Rule~1--4 of \tabref{fig-gadgets}, costing $4$, $6$, $7$, and
+$0$ T-gates respectively): caterpillar's compute-side cost of $6$ is
+not directly comparable to Rule~1's relative-phase cost of $4$, so
+any residual T-count gap between the two pipelines reflects, in part,
+a genuine difference in gadget-costing convention rather than purely
+a difference in circuit structure or scheduling quality.
+
+An additional \texttt{corrected\_t} metric,
+$2 \cdot t_{\mathrm{count}} - \mathrm{and\_pos}$, is also reported,
+where $\mathrm{and\_pos}$ is the number of primary outputs directly
+driven by an AND node. This correction compensates for the
+\emph{reverse} direction of the asymmetry above -- caterpillar's raw
+$t_{\mathrm{count}}$ implicitly assumes every output-driving AND can
+be uncomputed for free, which is not generally available to this
+project's own pipeline for genuine primary outputs (since a PO's
+value must be retained, not uncomputed) -- giving a fairer
+apples-to-apples total once both conventions are reconciled.
+
+\subsection{BLIF Reader Parity}
+
+Two correctness issues were found and fixed in
+\texttt{test/blif\_common.hpp} during this validation effort, both of
+which previously caused catastrophic parse failures (not merely
+inaccurate counts) on realistic circuits:
+
+\begin{enumerate}
+\item \textbf{Permissive 2-input/1-input cover fallback.} The shared
+  reader had been tightened, relative to the original
+  \texttt{blif\_to\_tcount.cpp}'s hand-rolled parser, to require an
+  \emph{exact} \texttt{"11 1"} cover match for a 2-input AND node
+  (and an exact \texttt{"1 1"} match for a 1-input buffer), throwing
+  on any other non-XOR cover. The original parser's convention was
+  strictly more permissive: any 2-input cover that does not match the
+  canonical XOR/XNOR pattern is treated as AND unconditionally, and
+  any 1-input cover that is not the canonical NOT pattern is treated
+  as a buffer unconditionally. Restoring this permissive fallback was
+  necessary to synthesize the EPFL \texttt{bar} (barrel shifter)
+  benchmark, whose BLIF contains at least one differently-formatted
+  (but semantically equivalent) AND cover that the stricter check
+  rejected.
+\item \textbf{Zero-fanin constant \texttt{.names} blocks.} The reader
+  previously had no handling at all for a \texttt{.names} block with
+  \emph{zero} fanins -- a bare constant signal, written by
+  \texttt{mockturtle::write\_blif} (but never by this project's own
+  \texttt{pebbling\_solver.write\_blif}) whenever an optimized XAG
+  retains a dangling or directly-used constant node. This case only
+  surfaces when a BLIF file has been round-tripped through an
+  external mockturtle-based tool, as described in
+  \secref{sec-pre-optimize} below; it was fixed by interpreting a
+  single \texttt{"1"} cover row as constant-true and anything else
+  (including an empty cover) as constant-false.
+\end{enumerate}
+
+\subsection{Symmetric Pre-Optimization Mode}
+\label{sec-pre-optimize}
+
+A second companion shim, \texttt{test/blif\_optimize.cpp}, wraps
+three mockturtle XAG optimization passes --
+\texttt{xag\_constant\_fanin\_optimization} (\texttt{const\_fanin}),
+NPN-resynthesis-based \texttt{cut\_rewriting} (4-input cuts), and
+free-XOR-aware \texttt{resubstitution\_minmc\_withDC}
+(\texttt{resub}) -- behind the same read/optimize/write-BLIF JSON
+contract as \texttt{blif\_to\_tcount}. The experiment harness's
+\texttt{--pre-optimize \textless pass\textgreater} /
+\texttt{--optimizer-bin} flags run exactly one such pass \emph{once}
+per benchmark, \emph{before} either pipeline sees the circuit, and
+feed the \emph{identical} resulting optimized BLIF file into both
+this project's own pipeline (via a fresh \texttt{read\_blif} re-parse)
+and into caterpillar -- keeping the comparison symmetric, so that any
+T-count delta reflects a genuine difference in synthesis strategy
+rather than one pipeline seeing a different (optimized vs.\
+unoptimized) circuit than the other. If the optimization pass itself
+fails for a given benchmark, that row is recorded with the error and
+\emph{neither} pipeline is run for it, rather than silently falling
+back to the unoptimized circuit for one pipeline only.
+
+\subsection{Empirical Findings on the EPFL \texttt{bar} Benchmark}
+
+Running this harness on the EPFL \texttt{bar} (barrel shifter, 135
+PIs, 128 POs, 3336 gates in its original EPFL-authored BLIF) surfaced
+three findings of independent interest.
+
+\textbf{(1) A BLIF round-trip artifact dominates the naive,
+unoptimized comparison.} Feeding caterpillar and this project's own
+pipeline the pristine, EPFL-authored \texttt{bar.blif} directly gives
+$\mathrm{ours}\text{-}T = 30448$ against a corrected caterpillar
+T-count of $17932$ -- a ratio of $1.698$, naively suggesting
+caterpillar synthesizes a substantially cheaper circuit. However,
+simply round-tripping the \emph{same, logically unchanged} circuit
+through \texttt{blif\_optimize --pass=const\_fanin} (which found
+\emph{zero} nodes to fold: $\mathrm{nodes\_before} =
+\mathrm{nodes\_after} = 1505$) and re-feeding the result to both
+pipelines drops $\mathrm{ours}\text{-}T$ to $17736$ against an
+\emph{unchanged} corrected caterpillar T-count of $17932$ -- a ratio
+of $0.989$. Since no AND-gate content changed (caterpillar's T-count,
+being driven solely by distinct AND triples, is exactly invariant
+across this round-trip), essentially the entire original $1.698\times$
+gap is attributable to how \texttt{pebbling\_solver}'s gate-grouping
+is sensitive to the specific \texttt{.names}-level encoding of
+XOR/buffer/NOT chains that \texttt{mockturtle::write\_blif} happens
+to emit, as distinct from the original EPFL file's own encoding --
+not to any real difference in optimization quality between the two
+pipelines. This round-trip-artifact-vs-real-optimization distinction
+is the key caveat attached to every pre-optimized result reported
+here, and is flagged as an open item for further investigation.
+
+\textbf{(2) Real structural optimization does close part of the
+remaining gap, and moves caterpillar's own number too.} Unlike
+\texttt{const\_fanin}, \texttt{cut\_rewriting} found genuine
+reductions on \texttt{bar} ($\mathrm{nodes\_before} = 1505 \to
+\mathrm{nodes\_after} = 1398$, a $\sim\!7\%$ reduction), consistent
+with a barrel shifter's substantial structural symmetry (every bit
+position and every shift stage reusing the same small set of
+shift-amount control signals) being exploitable at the local
+cut-rewriting level even though it is invisible to
+\texttt{const\_fanin}'s narrower algebraic-cancellation pattern. This
+is also the only pre-optimization run in which caterpillar's own
+corrected T-count actually moved ($17932 \to 16648$), landing at a
+final ratio of $1.032$ ($\mathrm{ours}\text{-}T = 17180$).
+
+\textbf{(3) Caterpillar's mapping strategies perform no internal
+logic-level optimization.} All three available caterpillar
+strategies used by \texttt{blif\_to\_tcount} --
+\texttt{xag\_pebbling\_mapping\_strategy},
+\texttt{xag\_mapping\_strategy}, and
+\texttt{xag\_low\_depth\_mapping\_strategy} (used elsewhere in this
+codebase's LLVM integration) -- are purely scheduling/mapping
+strategies operating on the XAG's AND/XOR structure \emph{as given};
+none restructure the logic network itself, and there is no
+caterpillar-side equivalent of \texttt{xag\_constant\_fanin\_
+optimization}, \texttt{cut\_rewriting}, or \texttt{resubstitution}.
+The flat caterpillar T-count observed across the unoptimized and
+\texttt{const\_fanin}-processed runs is therefore fully explained by
+the AND-subgraph being byte-for-byte identical in both cases, not by
+any internal caterpillar-side optimization absorbing the pre-pass.
+
+\subsection{A Circuit Class Favoring the Dirty-Ancilla Heuristic}
+
+The gadget-costing asymmetry noted above -- Rule~1's relative-phase
+compute/free-uncompute cost of $4$ T-gates per internal AND node,
+against caterpillar's literal $6$-T compute cost with $0$-T reuse
+available \emph{only} for an exactly-recurring AND triple -- suggests
+a circuit class where the dirty-ancilla heuristic should win cleanly:
+a sum of disjoint two-input AND terms XOR-accumulated into a single
+output, i.e.\ $\mathrm{out} = \bigoplus_{k} (x_{2k} \wedge x_{2k+1})$.
+Every AND term in such a circuit is purely internal (it fans into
+exactly one XOR accumulator and is never itself a primary output),
+making it an ideal fit for Rule~1, while every term is also
+structurally distinct, so caterpillar's exact-triple-recurrence
+discount never applies. A representative 10-input, 5-term instance
+of this family,
+\[
+\mathrm{out} = (x_0 \wedge x_1) \oplus (x_2 \wedge x_3) \oplus
+(x_4 \wedge x_5) \oplus (x_6 \wedge x_7) \oplus (x_8 \wedge x_9),
+\]
+synthesized at a tight pebble budget (\texttt{max\_pebbles=2}, which
+forces the greedy scheduler into exactly the compute$\to$fold-via-XOR
+$\to$uncompute$\to$reuse pattern Rule~1 is designed for), is expected
+to cost $5 \times 4 = 20$ T-gates under this project's own pipeline
+against $5 \times 6 = 30$ T-gates under caterpillar's convention --
+a predicted $33\%$ advantage for the heuristic that scales linearly
+with the number of XOR-accumulated AND terms. Confirming this
+prediction empirically (rather than relying on the convention-level
+argument alone) is left as a direct next validation step using the
+same harness described above.
